@@ -7,8 +7,10 @@ Cada teste parte de um achado VÁLIDO (que passa em todas as regras) e estraga u
 
 import unittest
 
+from pydantic import ValidationError
+
 from backend.compartilhado.modelos import AchadoComponente, PaginaLida, PedidoComponente
-from backend.pesquisa.conferencia import conferir_achado, conferir_achados, normalizar_texto
+from backend.pesquisa.conferencia import conferir_achado, conferir_achados, normalizar_texto, raiz_do_mpn
 
 URL = "https://acme.example/ac1234"
 
@@ -95,10 +97,10 @@ class TestRegra1Citacao(unittest.TestCase):
         r = conferir(achado(evidencias=[evidencia("corrente quiescente", citacao)]))
         self.assertEqual(r.achado.evidencias[0].situacao, "confirmado")
 
-    def test_confirmado_sem_citacao_vira_indicio(self):
-        r = conferir(achado(evidencias=[evidencia(citacao="")]))
-        self.assertEqual(r.achado.evidencias[0].situacao, "indicio")
-        self.assertIn("sem citação", r.alertas[0])
+    def test_confirmado_sem_citacao_nem_chega_aqui(self):
+        # Quem barra agora é o modelo Pydantic (ver tests/test_modelos.py): o achado nem pode ser criado.
+        with self.assertRaises(ValidationError):
+            achado(evidencias=[evidencia(citacao="")])
 
     def test_contradiz_com_citacao_inventada_so_avisa(self):
         r = conferir(achado(evidencias=[evidencia(citacao="máximo de 12 V", situacao="contradiz")]))
@@ -119,13 +121,64 @@ class TestRegra2Mpn(unittest.TestCase):
 
     def test_mpn_com_caixa_e_tipo_de_hifen_diferentes_e_aceito(self):
         pagina = paginas(PAGINA.replace("AC1234", "AC‑1234"))  # página: "AC‑1234" com hífen não separável
-        evs = [evidencia(citacao="")]  # sem citação, para o teste olhar só o MPN
+        evs = [evidencia(citacao="", situacao="nao_encontrado")]  # sem citação, para o teste olhar só o MPN
         self.assertEqual(conferir(achado(mpn="ac-1234", evidencias=evs), pagina).situacao, "valido")
 
     def test_mpn_sem_o_hifen_da_pagina_nao_casa(self):
         # Unificamos o TIPO de hífen, mas não o removemos: "AC1234" e "AC-1234" podem ser peças diferentes.
         pagina = paginas(PAGINA.replace("AC1234", "AC-1234"))
         self.assertEqual(conferir(achado(mpn="AC1234"), pagina).situacao, "recusado")
+
+
+class TestRaizDoMpn(unittest.TestCase):
+    """A regra da raiz, documentada por exemplos (a raiz sai normalizada: minúsculas)."""
+
+    def test_exemplos_da_regra(self):
+        casos = {
+            # 1. com hífen: o que vem antes do primeiro hífen
+            "AMS1117-3.3": "ams1117",
+            "LT1086CM-3.3#PBF": "lt1086cm",
+            # 2. sem hífen: letras + dígitos + até 2 letras de série
+            "NCP1117LPST33T3G": "ncp1117lp",
+            "TLV1117LV33DCYR": "tlv1117lv",
+            # 3. se a regra 2 pegou o MPN inteiro: só letras + dígitos
+            "LM317T": "lm317",
+            # sem raiz: curta demais, igual ao próprio MPN ou começando por dígito
+            "AP-12": None,  # "ap" tem menos de 4 caracteres
+            "LM7": None,
+            "NCP1117": None,  # já é só letras + dígitos: a "raiz" seria o próprio MPN
+            "1N4007": None,
+        }
+        for mpn, raiz in casos.items():
+            with self.subTest(mpn=mpn):
+                self.assertEqual(raiz_do_mpn(mpn), raiz)
+
+    def test_so_a_familia_na_pagina_e_valido_com_alerta(self):
+        pagina = "AMS1117 series. Output voltage: 3.3 V. Output current: 1 A. SOT-223."
+        evs = [evidencia("tensão de entrada máxima", citacao="Output voltage: 3.3 V", situacao="indicio")]
+        r = conferir(achado(mpn="AMS1117-3.3", evidencias=evs), paginas(pagina))
+        self.assertEqual(r.situacao, "valido")
+        self.assertIn("AMS1117-3.3: MPN exato não encontrado na página; só a família (ams1117)", r.alertas)
+
+    def test_familia_sem_hifen(self):
+        pagina = "The NCP1117LP is a low dropout regulator."
+        r = conferir(achado(mpn="NCP1117LPST33T3G", evidencias=[]), paginas(pagina))
+        self.assertEqual(r.situacao, "valido")
+
+    def test_raiz_curta_demais_recusa(self):
+        r = conferir(achado(mpn="AP-12", evidencias=[]), paginas("AP regulators, AP-11 and AP-13."))
+        self.assertEqual((r.situacao, r.motivo), ("recusado", "MPN não aparece na página"))
+
+    def test_nem_mpn_nem_familia_recusa(self):
+        r = conferir(achado(mpn="XY9999-3.3", evidencias=[]))
+        self.assertEqual((r.situacao, r.motivo), ("recusado", "MPN não aparece na página"))
+
+    def test_familia_nao_casa_com_outra_peca_que_so_comeca_igual(self):
+        # "LM317" não pode casar com "LM3175" (outra peça) nem com "XLM317".
+        for pagina in ("LM3175 buck controller", "XLM317 module"):
+            with self.subTest(pagina=pagina):
+                self.assertEqual(conferir(achado(mpn="LM317T", evidencias=[]), paginas(pagina)).situacao, "recusado")
+        self.assertEqual(conferir(achado(mpn="LM317T", evidencias=[]), paginas("LM317 datasheet")).situacao, "valido")
 
 
 class TestRegra3Numeros(unittest.TestCase):
@@ -193,10 +246,14 @@ class TestRegra5CicloDeVida(unittest.TestCase):
         self.assertIn("obsoleto", r.motivo)
         self.assertTrue(any("obsoleto" in a for a in r.alertas))
 
-    def test_nrnd_e_desconhecido_tambem_recusam(self):
-        for ciclo in ("nrnd", "desconhecido"):
-            with self.subTest(ciclo=ciclo):
-                self.assertEqual(conferir(achado(ciclo_de_vida=ciclo)).situacao, "recusado")
+    def test_nrnd_recusa(self):
+        r = conferir(achado(ciclo_de_vida="nrnd"))
+        self.assertEqual((r.situacao, r.motivo), ("recusado", "ciclo de vida: nrnd"))
+
+    def test_desconhecido_continua_valido_com_alerta(self):
+        r = conferir(achado(ciclo_de_vida="desconhecido"))
+        self.assertEqual((r.situacao, r.motivo), ("valido", ""))
+        self.assertEqual(r.alertas, ["AC1234: ciclo de vida desconhecido"])
 
     def test_varios_motivos_juntos(self):
         r = conferir(achado(mpn="XY9999", ciclo_de_vida="obsoleto"))

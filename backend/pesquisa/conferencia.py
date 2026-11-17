@@ -5,11 +5,12 @@ prova existe de verdade e se diz o que a LLM afirma. As regras:
 
 1. A citação de cada evidência precisa aparecer no texto da página lida (comparação tolerante a maiúsculas, acentos,
    tipos de espaço e de hífen). Se não aparecer, "confirmado" cai para "indicio".
-2. O MPN (código da peça) precisa aparecer na página. Se não, o achado é RECUSADO.
+2. O MPN (código da peça) precisa aparecer na página. Se só a família aparecer (`raiz_do_mpn`: "AMS1117" de
+   "AMS1117-3.3"), o achado continua válido, com alerta. Se nem a família aparecer, o achado é RECUSADO.
 3. Os números da citação precisam atender ao requisito. Se a LLM disse "confirmado", mas nenhuma quantidade da citação
    atende, vira "contradiz" (ou "indicio", se a citação não tiver nenhuma quantidade na unidade do requisito).
 4. A URL do achado precisa estar entre as páginas efetivamente lidas. Se não, o achado é RECUSADO.
-5. Ciclo de vida diferente de "ativo" gera alerta e o achado é RECUSADO (não conta como válido).
+5. Ciclo de vida "obsoleto" ou "nrnd": o achado é RECUSADO. "desconhecido": só um alerta (continua válido).
 
 Nada aqui chama rede ou LLM: dá para testar tudo com dados fixos.
 
@@ -85,6 +86,39 @@ def _aparece(trecho: str, texto_normalizado: str) -> bool:
     return bool(trecho) and trecho in texto_normalizado
 
 
+MIN_RAIZ = 4  # raiz mais curta que isso casaria com qualquer coisa ("LM3" está em centenas de peças)
+# Letras + dígitos + até 2 letras de série. Ex.: "NCP" + "1117" + "LP" de "NCP1117LPST33T3G".
+_RAIZ_COM_SERIE = re.compile(r"[a-z]+[0-9]+[a-z]{0,2}")
+_RAIZ_CURTA = re.compile(r"[a-z]+[0-9]+")  # só letras + dígitos. Ex.: "LM317" de "LM317T"
+
+
+def raiz_do_mpn(mpn: str) -> str | None:
+    """A "família" de um MPN (já normalizada), ou None se não houver uma raiz confiável.
+
+    MPNs costumam ser família + variante (tensão, encapsulamento, embalagem). Regras, em ordem:
+    1. Com hífen: o que vem antes do primeiro hífen.            "AMS1117-3.3"      -> "ams1117"
+    2. Sem hífen: letras + dígitos + até 2 letras de série.     "NCP1117LPST33T3G" -> "ncp1117lp"
+    3. Se a regra 2 pegou o MPN inteiro: só letras + dígitos.   "LM317T"           -> "lm317"
+    Sem raiz (None): menos de MIN_RAIZ caracteres, igual ao próprio MPN ou começando por dígito ("1N4007").
+    """
+    mpn = normalizar_texto(mpn)
+    if "-" in mpn:
+        raiz = mpn.split("-", 1)[0]
+    else:
+        casamento = _RAIZ_COM_SERIE.match(mpn)
+        raiz = casamento.group() if casamento else ""
+        if raiz == mpn:
+            casamento = _RAIZ_CURTA.match(mpn)
+            raiz = casamento.group() if casamento else ""
+    return raiz if len(raiz) >= MIN_RAIZ and raiz != mpn else None
+
+
+def _familia_aparece(raiz: str, texto_normalizado: str) -> bool:
+    """A raiz aparece como começo de um código na página? Não pode vir colada a letra/dígito antes nem a DÍGITO depois:
+    "lm317" casa com "lm317t" e "lm317 series", mas não com "lm3175" (outra peça) nem com "xlm317"."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(raiz)}(?![0-9])", texto_normalizado) is not None
+
+
 def _curto(texto: str) -> str:
     """Corta texto da LLM para caber num alerta."""
     return texto if len(texto) <= _TAMANHO_NO_ALERTA else texto[: _TAMANHO_NO_ALERTA - 1] + "…"
@@ -142,9 +176,7 @@ def _conferir_evidencia(
 
     if evidencia.situacao != "confirmado":
         return evidencia, None  # indicio/nao_encontrado/contradiz não são promovidos nem conferidos aqui
-
-    if not citacao_achada:  # "confirmado" sem citação nenhuma
-        return evidencia.model_copy(update={"situacao": "indicio"}), f"{nome}: confirmado sem citação"
+    # (Daqui em diante a citação existe e foi achada: "confirmado" sem citação já é recusado pelo modelo Pydantic.)
 
     requisito = requisitos.get(normalizar_texto(evidencia.requisito))
     if requisito is None:
@@ -188,13 +220,22 @@ def conferir_achado(
 
     texto = normalizar_texto(pagina.conteudo)  # normalizamos a página UMA vez e reaproveitamos
 
-    # Regra 2: o código da peça precisa estar na página.
+    # Regra 2, em três níveis: (a) MPN exato na página: ok; (b) só a família (raiz) aparece: válido, com alerta;
+    # (c) nem um nem outro: recusado. O nível (b) existe porque a leitura traz TRECHOS da página, e o código
+    # completo (com sufixo de tensão/embalagem) muitas vezes só aparece numa tabela que não veio.
     if not _aparece(achado.mpn, texto):
-        motivos.append("MPN não aparece na página")
+        raiz = raiz_do_mpn(achado.mpn)
+        if raiz and _familia_aparece(raiz, texto):
+            alertas.append(f"{mpn}: MPN exato não encontrado na página; só a família ({raiz})")
+        else:
+            motivos.append("MPN não aparece na página")
 
-    # Regra 5: só peça ativa conta como válida.
-    if achado.ciclo_de_vida != "ativo":
+    # Regra 5: obsoleto e nrnd saem da lista de válidos; desconhecido só gera alerta (é o caso comum: datasheets
+    # raramente dizem "ativo", e recusar por isso descartaria quase tudo).
+    if achado.ciclo_de_vida in ("obsoleto", "nrnd"):
         motivos.append(f"ciclo de vida: {achado.ciclo_de_vida}")
+    elif achado.ciclo_de_vida == "desconhecido":
+        alertas.append(f"{mpn}: ciclo de vida desconhecido")
 
     # Regras 1 e 3, evidência por evidência. Os requisitos são achados pelo nome normalizado ("Tensão" == "tensao").
     requisitos = {normalizar_texto(r.parametro): r for r in pedido.requisitos}

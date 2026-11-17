@@ -167,6 +167,25 @@ class TestEvidenciaRequisito(unittest.TestCase):
             with self.subTest(situacao=situacao), self.assertRaises(ValidationError):
                 m.EvidenciaRequisito(**evidencia(situacao=situacao))
 
+    def test_citacao_obrigatoria_exceto_em_nao_encontrado(self):
+        for situacao in ("confirmado", "indicio", "contradiz"):
+            for citacao in ("", "   "):  # espaços viram "" (str_strip_whitespace) e também são recusados
+                with self.subTest(situacao=situacao, citacao=citacao):
+                    with self.assertRaises(ValidationError) as erro:
+                        m.EvidenciaRequisito(**evidencia(situacao=situacao, citacao=citacao))
+                    self.assertIn("evidência 'tensão de entrada' precisa de `citacao`", str(erro.exception))
+        with self.assertRaises(ValidationError):  # omitir o campo é o mesmo que deixá-lo vazio
+            m.EvidenciaRequisito(requisito="tensão", situacao="confirmado", justificativa="o datasheet diz 3,3 V")
+        m.EvidenciaRequisito(requisito="tensão", situacao="nao_encontrado")  # aqui pode faltar
+
+    def test_schema_que_a_llm_ve_tambem_exige_citacao(self):
+        schema = m.EvidenciaRequisito.model_json_schema()
+        self.assertEqual(schema["if"], {"properties": {"situacao": {"not": {"const": "nao_encontrado"}}}})
+        self.assertEqual(schema["then"]["required"], ["citacao"])
+        self.assertEqual(schema["then"]["properties"]["citacao"], {"minLength": 1})
+        self.assertIn("LITERALMENTE", schema["properties"]["citacao"]["description"])
+        self.assertFalse(schema["additionalProperties"])  # o extra="forbid" continua lá
+
     def test_citacao_no_maximo_400(self):
         self.assertEqual(m.MAX_CITACAO, 400)
         m.EvidenciaRequisito(**evidencia(citacao="x" * 400))

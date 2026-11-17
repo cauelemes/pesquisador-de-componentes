@@ -133,14 +133,36 @@ class EvidenciaRequisito(BaseModel):
     A citação é curta (máx. 400 caracteres) de propósito: a prova tem que ser um trecho pontual, fácil de conferir.
     """
 
-    model_config = _CONFIG
+    # `json_schema_extra` acrescenta ao schema (o que a LLM vê) a mesma regra do validador abaixo, em JSON Schema:
+    # "SE a situação não é nao_encontrado, ENTÃO citacao é obrigatória e não vazia". Assim a regra aparece nos dois lados.
+    model_config = ConfigDict(
+        **_CONFIG,
+        json_schema_extra={
+            "if": {"properties": {"situacao": {"not": {"const": "nao_encontrado"}}}},
+            "then": {"required": ["citacao"], "properties": {"citacao": {"minLength": 1}}},
+        },
+    )
 
     requisito: str = Field(min_length=1, max_length=MAX_NOME)  # o `parametro` do Requisito a que se refere
     situacao: Literal["confirmado", "indicio", "nao_encontrado", "contradiz"]
-    citacao: str = Field(default="", max_length=MAX_CITACAO)
+    citacao: str = Field(
+        default="",
+        max_length=MAX_CITACAO,
+        description="Frase copiada LITERALMENTE da página lida. Obrigatória, exceto quando situacao = nao_encontrado.",
+    )
     valor: Numero | None = None  # o valor lido na fonte, se houver
     unidade: str | None = Field(default=None, max_length=MAX_UNIDADE)
     justificativa: str = Field(default="", max_length=MAX_JUSTIFICATIVA)
+
+    @model_validator(mode="after")
+    def _exige_citacao(self) -> "EvidenciaRequisito":
+        """Sem citação não há prova: só "nao_encontrado" pode vir sem ela. A mensagem é escrita para a LLM corrigir."""
+        if self.situacao != "nao_encontrado" and not self.citacao:
+            raise ValueError(
+                f"evidência '{self.requisito}' precisa de `citacao`: copie a frase literal da página lida "
+                "(ou use situacao nao_encontrado)"
+            )
+        return self
 
 
 class AchadoComponente(BaseModel):
