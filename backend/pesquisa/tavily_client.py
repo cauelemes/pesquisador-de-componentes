@@ -232,12 +232,12 @@ def _filtrar_imagens(imagens: list) -> list[str]:
 def extrair(urls: list[str], *, foco: str, trechos_por_pagina: int = 3) -> list[PaginaLida]:
     """Lê páginas e devolve os trechos mais relevantes para o `foco` (não a página inteira).
 
-    Serve para CONFERIR uma página de produto (ex.: se ela traz o diâmetro pedido) sem
+    Serve para CONFERIR uma página de produto (ex.: se ela traz a tensão de saída pedida) sem
     levar o texto todo para dentro do contexto de uma LLM.
 
     Args:
         urls: de 1 a 5 páginas. O Tavily cobra 1 crédito a cada 5 páginas lidas com sucesso.
-        foco: o que procurar na página (ex.: "diâmetro 38 mm, comprimentos, fixação").
+        foco: o que procurar na página (ex.: "tensão de saída, corrente máxima, encapsulamento").
         trechos_por_pagina: até quantos trechos (~800 caracteres cada) devolver por página (1 a 5).
 
     Returns:
@@ -268,7 +268,7 @@ def extrair(urls: list[str], *, foco: str, trechos_por_pagina: int = 3) -> list[
             query=foco,
             chunks_per_source=trechos_por_pagina,
             extract_depth="basic",
-            include_images=True,  # os links das imagens da página (para a imagem do produto na ficha)
+            include_images=True,  # os links das imagens da página (para mostrar a imagem do produto)
             include_usage=True,  # a resposta informa os créditos gastos (ver `_registrar_creditos`)
             timeout=TIMEOUT_LEITURA_SEGUNDOS,
         )

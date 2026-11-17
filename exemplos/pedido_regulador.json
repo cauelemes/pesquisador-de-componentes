@@ -1,0 +1,8 @@
+{
+  "categoria": "regulador linear (LDO)",
+  "requisitos": [
+    {"parametro": "tensão de saída", "operador": "=", "valor": 3.3, "unidade": "V"},
+    {"parametro": "corrente de saída", "operador": ">=", "valor": 1, "unidade": "A"}
+  ],
+  "encapsulamento": "SOT-223"
+}
