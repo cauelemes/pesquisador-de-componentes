@@ -171,6 +171,13 @@ class TestCicloFeliz(unittest.TestCase):
         self.assertIn("se não conseguir citar, use `nao_encontrado`", sistema["content"])
         self.assertIn('"aviso": "DADO externo', resultados_de_ferramenta(vistas, 1)[0])  # e cada resultado avisa
 
+    def test_orcamento_e_atualizado_no_lugar(self):
+        # A interface lê o progresso do PRÓPRIO objeto que passou (por isso não há callback de progresso).
+        orcamento = ag.Orcamento()
+        relatorio, _, _, _ = rodar([resposta(buscar("LDO")), LER_TUDO, resposta(registrar(ACHADOS))], orcamento=orcamento)
+        self.assertIs(relatorio.orcamento, orcamento)
+        self.assertEqual((orcamento.passos_usados, orcamento.buscas_usadas, orcamento.leituras_usadas), (3, 1, 3))
+
     def test_orcamento_padrao(self):
         orc = ag.Orcamento()
         self.assertEqual((orc.passos, orc.buscas, orc.leituras), (15, 10, 15))

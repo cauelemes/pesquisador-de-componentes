@@ -55,6 +55,7 @@ _AVISO_CORTE = (
 )
 
 MAX_CARACTERES_PAGINA = 12_000  # texto de cada página lida que vai para a LLM (e para a conferência)
+PREFIXO_FALHA_LLM = "falha ao falar com a LLM"  # começo do alerta de falha: a interface o reconhece por aqui
 MIN_ACHADOS_VALIDOS = 3  # abaixo disso, a LLM recebe UMA chance de revisar
 MAX_RESULTADOS_BUSCA = 5
 MAX_TRECHO_RESULTADO = 500  # quanto do resumo de cada resultado de busca a LLM vê
@@ -260,7 +261,7 @@ class _Ciclo:
                 if resposta.motivo_parada == "length":
                     cortes = 2
         except tg.ErroTogether as erro:  # mensagem já escrita para o usuário, sem dados sensíveis
-            self.alertas.append(f"falha ao falar com a LLM: {erro}")
+            self.alertas.append(f"{PREFIXO_FALHA_LLM}: {erro}")
             return False
 
         registro = {

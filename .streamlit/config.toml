@@ -1,0 +1,9 @@
+# Configuração do servidor do Streamlit (este arquivo vai para o git; os segredos NÃO: ficam em secrets.toml).
+
+[server]
+address = "localhost"          # escuta só nesta máquina (ninguém da rede acessa por acidente)
+headless = true                # não tenta abrir o navegador sozinho; o endereço aparece no terminal
+enableXsrfProtection = true    # protege os envios de formulário/arquivo contra pedidos forjados de outro site
+
+[browser]
+gatherUsageStats = false       # não envia estatísticas de uso ao Streamlit
