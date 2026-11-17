@@ -25,7 +25,14 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ..compartilhado.modelos import AchadoComponente, EvidenciaRequisito, PaginaLida, PedidoComponente, Requisito
+from ..compartilhado.modelos import (
+    AchadoComponente,
+    AchadoRecusado,
+    EvidenciaRequisito,
+    PaginaLida,
+    PedidoComponente,
+    Requisito,
+)
 from ..compartilhado.unidades import ErroDeUnidade, atende, quantidades_do_texto, unidade_base
 from .urls import normalizar_url
 
@@ -360,3 +367,43 @@ def conferir_achados(
     """Confere vários achados e junta os alertas de todos, na ordem."""
     conferidos = [conferir_achado(a, paginas_lidas, pedido) for a in achados]
     return ResultadoConferencia(achados=conferidos, alertas=[alerta for c in conferidos for alerta in c.alertas])
+
+
+# =====================================================================================================================
+# O resumo CONFERIDO (escrito pelo código, não pela LLM)
+# =====================================================================================================================
+def _componentes(n: int) -> str:
+    return f"{n} componente" if n == 1 else f"{n} componentes"
+
+
+def _lista(achados) -> str:
+    """ "MPN (Fabricante), MPN (Fabricante)" — funciona com `AchadoComponente` e `AchadoRecusado`."""
+    return ", ".join(f"{a.mpn} ({a.fabricante})" for a in achados)
+
+
+def montar_resumo_conferido(validos: list[AchadoComponente], recusados: list[AchadoRecusado]) -> str:
+    """O resumo do resultado, escrito pelo CÓDIGO a partir da conferência (sem LLM: sempre bate com o resultado).
+
+    Ex.: "A LLM propôs 4 componentes; 3 passaram na conferência: AMS1117-3.3 (Advanced Monolithic Systems), ...
+    Recusado: AP2114H-3.3TRG1 (Diodes): MPN não aparece na página."
+    """
+    propostos = len(validos) + len(recusados)
+    if propostos == 0:
+        return "A LLM não propôs nenhum componente."
+    if not validos:
+        texto = f"A LLM propôs {_componentes(propostos)}; nenhum passou na conferência."
+    else:
+        passaram = "1 passou" if len(validos) == 1 else f"{len(validos)} passaram"
+        texto = f"A LLM propôs {_componentes(propostos)}; {passaram} na conferência: {_lista(validos)}."
+    if recusados:
+        rotulo = "Recusado" if len(recusados) == 1 else "Recusados"
+        texto += f" {rotulo}: " + "; ".join(f"{r.mpn} ({r.fabricante}): {r.motivo}" for r in recusados) + "."
+    return texto
+
+
+def alertas_do_comentario(resumo_da_llm: str, recusados: list[AchadoRecusado]) -> list[str]:
+    """Um alerta para cada MPN RECUSADO que o comentário da LLM ainda cita (mesma normalização da conferência)."""
+    texto = normalizar_texto(resumo_da_llm)
+    return [
+        f"o comentário da LLM cita {_curto(r.mpn)}, que foi recusado" for r in recusados if _aparece(r.mpn, texto)
+    ]

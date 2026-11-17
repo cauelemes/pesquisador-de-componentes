@@ -9,10 +9,12 @@ import unittest
 
 from pydantic import ValidationError
 
-from backend.compartilhado.modelos import AchadoComponente, PaginaLida, PedidoComponente
+from backend.compartilhado.modelos import AchadoComponente, AchadoRecusado, PaginaLida, PedidoComponente
 from backend.pesquisa import conferencia
 from backend.pesquisa.conferencia import (
+    alertas_do_comentario,
     citacao_confere,
+    montar_resumo_conferido,
     conferir_achado,
     conferir_achados,
     normalizar_texto,
@@ -428,6 +430,50 @@ class TestRegra5CicloDeVida(unittest.TestCase):
     def test_varios_motivos_juntos(self):
         r = conferir(achado(mpn="XY9999", ciclo_de_vida="obsoleto"))
         self.assertEqual(r.motivo, "MPN não aparece na página; ciclo de vida: obsoleto")
+
+
+def recusado(mpn="AP2114H-3.3TRG1", fabricante="Diodes", motivo="MPN não aparece na página") -> AchadoRecusado:
+    return AchadoRecusado(fabricante=fabricante, mpn=mpn, motivo=motivo)
+
+
+def valido(mpn, fabricante) -> AchadoComponente:
+    return achado(mpn=mpn, fabricante=fabricante, evidencias=[])
+
+
+class TestResumoConferido(unittest.TestCase):
+    def test_todos_validos(self):
+        texto = montar_resumo_conferido([valido("AMS1117-3.3", "AMS"), valido("NCP1117", "onsemi")], [])
+        self.assertEqual(texto, "A LLM propôs 2 componentes; 2 passaram na conferência: AMS1117-3.3 (AMS), NCP1117 (onsemi).")
+
+    def test_alguns_recusados_com_motivo(self):
+        validos = [valido("AMS1117-3.3", "Advanced Monolithic Systems"), valido("NCP1117ST33T3G", "onsemi"),
+                   valido("TLV1117LV33DCYR", "Texas Instruments")]
+        texto = montar_resumo_conferido(validos, [recusado()])
+        self.assertEqual(texto, "A LLM propôs 4 componentes; 3 passaram na conferência: AMS1117-3.3 (Advanced Monolithic "
+                                "Systems), NCP1117ST33T3G (onsemi), TLV1117LV33DCYR (Texas Instruments). Recusado: "
+                                "AP2114H-3.3TRG1 (Diodes): MPN não aparece na página.")
+
+    def test_todos_recusados(self):
+        texto = montar_resumo_conferido([], [recusado(), recusado("LD1117", "ST", "ciclo de vida: obsoleto")])
+        self.assertEqual(texto, "A LLM propôs 2 componentes; nenhum passou na conferência. Recusados: AP2114H-3.3TRG1 "
+                                "(Diodes): MPN não aparece na página; LD1117 (ST): ciclo de vida: obsoleto.")
+
+    def test_singular_e_nenhum_proposto(self):
+        self.assertEqual(montar_resumo_conferido([valido("BT33", "Beta")], []),
+                         "A LLM propôs 1 componente; 1 passou na conferência: BT33 (Beta).")
+        self.assertEqual(montar_resumo_conferido([], []), "A LLM não propôs nenhum componente.")
+
+
+class TestAlertasDoComentario(unittest.TestCase):
+    def test_comentario_que_cita_um_recusado_gera_alerta(self):
+        comentario = "Encontrei 4 LDOs: AMS1117-3.3, ap2114h\u20113.3trg1 e outros, com provas em datasheets."
+        self.assertEqual(alertas_do_comentario(comentario, [recusado()]),
+                         ["o comentário da LLM cita AP2114H-3.3TRG1, que foi recusado"])  # caixa e hífen diferentes
+
+    def test_comentario_que_nao_cita_nao_gera(self):
+        self.assertEqual(alertas_do_comentario("Encontrei 3 LDOs: AMS1117-3.3 e NCP1117.", [recusado()]), [])
+        self.assertEqual(alertas_do_comentario("", [recusado()]), [])
+        self.assertEqual(alertas_do_comentario("cita AP2114H-3.3TRG1", []), [])  # nada recusado, nada a avisar
 
 
 class TestConferirAchados(unittest.TestCase):

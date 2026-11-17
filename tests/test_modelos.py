@@ -243,14 +243,32 @@ class TestAchadoComponente(unittest.TestCase):
                 m.AchadoComponente(**dados)
 
 
+def recusado(**mudancas) -> dict:
+    return {"fabricante": "Delta", "mpn": "XY9999", "motivo": "MPN não aparece na página"} | mudancas
+
+
+class TestAchadoRecusado(unittest.TestCase):
+    def test_valido_e_campo_a_mais(self):
+        self.assertEqual(m.AchadoRecusado(**recusado()).motivo, "MPN não aparece na página")
+        with self.assertRaises(ValidationError):
+            m.AchadoRecusado(**recusado(extra=1))
+
+    def test_limites(self):
+        for campo, tamanho in (("fabricante", 0), ("mpn", m.MAX_MPN + 1), ("motivo", 0), ("motivo", m.MAX_MOTIVO + 1)):
+            with self.subTest(campo=campo, tamanho=tamanho), self.assertRaises(ValidationError):
+                m.AchadoRecusado(**recusado(**{campo: "x" * tamanho}))
+
+
 class TestResultadoPesquisa(unittest.TestCase):
     def test_vazio_e_valido(self):
         r = m.ResultadoPesquisa()
-        self.assertEqual((r.achados, r.alertas, r.resumo), ([], [], ""))
+        self.assertEqual((r.achados, r.recusados, r.alertas, r.resumo_conferido, r.resumo_da_llm), ([], [], [], "", ""))
 
     def test_completo_e_remove_espacos(self):
-        r = m.ResultadoPesquisa(achados=[achado()], alertas=["  sem datasheet  "], resumo="  ok  ")
-        self.assertEqual((r.alertas, r.resumo), (["sem datasheet"], "ok"))
+        r = m.ResultadoPesquisa(achados=[achado()], alertas=["  sem datasheet  "], resumo_da_llm="  ok  ",
+                                resumo_conferido=" conferido ", recusados=[recusado(mpn=" XY1 ")])
+        self.assertEqual((r.alertas, r.resumo_da_llm, r.resumo_conferido), (["sem datasheet"], "ok", "conferido"))
+        self.assertEqual(r.recusados[0].mpn, "XY1")
         self.assertIsInstance(r.achados[0], m.AchadoComponente)
 
     def test_campo_a_mais_recusado(self):
@@ -263,7 +281,10 @@ class TestResultadoPesquisa(unittest.TestCase):
             "alertas demais": {"alertas": ["a"] * (m.MAX_ALERTAS + 1)},
             "alerta longo": {"alertas": ["x" * (m.MAX_ALERTA + 1)]},
             "alerta vazio": {"alertas": ["   "]},
-            "resumo longo": {"resumo": "x" * (m.MAX_RESUMO + 1)},
+            "resumo da LLM longo": {"resumo_da_llm": "x" * (m.MAX_RESUMO + 1)},
+            "resumo conferido longo": {"resumo_conferido": "x" * (m.MAX_RESUMO_CONFERIDO + 1)},
+            "recusados demais": {"recusados": [recusado()] * (m.MAX_RECUSADOS + 1)},
+            "campo antigo `resumo`": {"resumo": "ok"},  # o nome antigo não existe mais (extra="forbid")
         }
         for nome, dados in casos.items():
             with self.subTest(nome), self.assertRaises(ValidationError):

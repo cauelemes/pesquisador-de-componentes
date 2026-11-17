@@ -91,7 +91,13 @@ def _registrar_uso(modelo: str, resposta, mensagens: list[dict], ferramentas: li
     entrada = getattr(informado, "prompt_tokens", None)
     saida = getattr(informado, "completion_tokens", None)
     if type(entrada) is int and type(saida) is int:
-        contador_de_uso.registrar_sucesso(modelo, entrada, saida)
+        contador_de_uso.registrar_sucesso(
+            modelo,
+            entrada,
+            saida,
+            tokens_em_cache=_tokens_detalhados(informado, "prompt_tokens_details", "cached_tokens"),
+            tokens_raciocinio=_tokens_detalhados(informado, "completion_tokens_details", "reasoning_tokens"),
+        )
     else:
         contador_de_uso.registrar_sem_uso(modelo, contador_de_uso.estimar_tokens_das_mensagens(mensagens, ferramentas=ferramentas))
 

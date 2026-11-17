@@ -13,8 +13,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from ..compartilhado.modelos import PedidoComponente
-from .agente import ESFORCOS_ACEITOS, MODELO_AGENTE_PESQUISA, TIMEOUT_CHAMADA_SEGUNDOS, Orcamento, pesquisar
+from ..compartilhado.modelos import ROTULO_RESUMO_DA_LLM, PedidoComponente
+from ..servico.pesquisa import executar_pesquisa
+from .agente import ESFORCOS_ACEITOS, MODELO_AGENTE_PESQUISA, TIMEOUT_CHAMADA_SEGUNDOS, Orcamento
+from .registro import salvar_registro
 
 
 def main(argumentos: list[str] | None = None) -> int:
@@ -22,7 +24,7 @@ def main(argumentos: list[str] | None = None) -> int:
     leitor = argparse.ArgumentParser(description="Pesquisa componentes eletrônicos para um pedido em JSON.")
     leitor.add_argument("pedido", type=Path, help="arquivo JSON com o pedido (veja exemplos/)")
     leitor.add_argument("--max-passos", type=int, default=Orcamento.passos, help="limite de chamadas à LLM")
-    leitor.add_argument("--salvar", type=Path, help="grava o relatório completo (com os passos) neste JSON")
+    leitor.add_argument("--salvar", type=Path, help="grava o registro completo (passos, páginas, uso) neste JSON")
     leitor.add_argument("--modelo", default=MODELO_AGENTE_PESQUISA, help="ID do modelo na Together")
     # `choices`: o argparse recusa sozinho qualquer outro valor (ex.: "medium", que o Flash não aceita).
     leitor.add_argument("--esforco", choices=ESFORCOS_ACEITOS, help="esforço de raciocínio (padrão: o do modelo)")
@@ -42,10 +44,12 @@ def main(argumentos: list[str] | None = None) -> int:
         print(f"Pedido inválido: {erro}", file=sys.stderr)
         return 1
 
-    relatorio = pesquisar(
+    # O CLI usa a MESMA porta de entrada que o frontend usará (a camada de serviço).
+    execucao = executar_pesquisa(
         pedido, orcamento=Orcamento(passos=opcoes.max_passos), modelo=opcoes.modelo, esforco=opcoes.esforco,
         timeout=opcoes.timeout,
     )
+    relatorio, registro = execucao.relatorio, execucao.registro
     resultado = relatorio.resultado
 
     print(f"\nModelo: {opcoes.modelo} · esforço: {opcoes.esforco or 'padrão do modelo'}")
@@ -59,12 +63,18 @@ def main(argumentos: list[str] | None = None) -> int:
         print("\nAlertas:")
         for alerta in resultado.alertas:
             print(f"  - {alerta}")
-    if resultado.resumo:
-        print(f"\nResumo: {resultado.resumo}")
+    print(f"\nResumo conferido: {resultado.resumo_conferido}")
+    if resultado.resumo_da_llm:
+        print(f"\n{ROTULO_RESUMO_DA_LLM}: {resultado.resumo_da_llm}")
+    uso = registro.uso
+    print(
+        f"\nUso: {uso.tokens_entrada} tokens de entrada ({uso.tokens_em_cache} em cache), {uso.tokens_saida} de saída "
+        f"({uso.tokens_raciocinio} de raciocínio) · custo estimado US$ {uso.custo_estimado_usd:.4f} · "
+        f"{registro.duracao_segundos:.0f} s"
+    )
 
     if opcoes.salvar:
-        opcoes.salvar.parent.mkdir(parents=True, exist_ok=True)
-        opcoes.salvar.write_text(relatorio.como_json(), encoding="utf-8")
+        salvar_registro(registro, opcoes.salvar)
         print(f"\nRelatório salvo em {opcoes.salvar}")
     return 0 if resultado.achados else 2
 

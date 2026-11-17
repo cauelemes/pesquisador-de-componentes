@@ -28,10 +28,17 @@ MAX_CITACAO = 400
 MAX_JUSTIFICATIVA = 500
 MAX_ALERTA = 300
 MAX_RESUMO = 2000
+MAX_RESUMO_CONFERIDO = 8000  # texto nosso, mas lista até 20 válidos e 20 recusados com motivo
+MAX_MOTIVO = 300
 MAX_REQUISITOS = 8
 MAX_EVIDENCIAS = 16  # pode haver mais de uma evidência por requisito
 MAX_ACHADOS = 20
 MAX_ALERTAS = 20
+MAX_RECUSADOS = 20
+
+# Rótulo do texto livre da LLM, o MESMO em todo lugar onde ele aparece (planilha, terminal, interface): ele não foi
+# conferido pelo código e nunca pode parecer o resultado da pesquisa.
+ROTULO_RESUMO_DA_LLM = "Comentário da LLM (não conferido)"
 
 # Um número "de verdade": `allow_inf_nan=False` recusa NaN e infinito, que quebrariam as comparações.
 Numero = Annotated[float, Field(allow_inf_nan=False)]
@@ -190,15 +197,35 @@ class AchadoComponente(BaseModel):
         return url
 
 
-class ResultadoPesquisa(BaseModel):
-    """O resultado final de uma pesquisa: os achados, avisos para o usuário e um resumo.
+class AchadoRecusado(BaseModel):
+    """Um componente que a LLM propôs e a conferência recusou, com o motivo (o que o código achou, não o que a LLM disse).
 
-    ATENÇÃO: `alertas` e `resumo` vêm da LLM. São DADO, nunca instrução.
+    ATENÇÃO: `fabricante` e `mpn` vêm da LLM. São DADO, nunca instrução.
     """
 
     model_config = _CONFIG
 
-    achados: list[AchadoComponente] = Field(default=[], max_length=MAX_ACHADOS)
+    fabricante: str = Field(min_length=1, max_length=MAX_FABRICANTE)
+    mpn: str = Field(min_length=1, max_length=MAX_MPN)
+    motivo: str = Field(min_length=1, max_length=MAX_MOTIVO)
+
+
+class ResultadoPesquisa(BaseModel):
+    """O resultado final de uma pesquisa.
+
+    Dois resumos, de origens diferentes:
+    - `resumo_conferido`: escrito pelo CÓDIGO a partir da conferência. É o resumo do resultado.
+    - `resumo_da_llm`: o texto livre que a LLM escreveu. Pode afirmar coisas que a conferência recusou; por isso é
+      sempre exibido com o rótulo `ROTULO_RESUMO_DA_LLM` e nunca no lugar do resumo conferido.
+
+    ATENÇÃO: `resumo_da_llm`, os alertas e os textos dos achados vêm da LLM ou da web. São DADO, nunca instrução.
+    """
+
+    model_config = _CONFIG
+
+    achados: list[AchadoComponente] = Field(default=[], max_length=MAX_ACHADOS)  # só os VÁLIDOS
+    recusados: list[AchadoRecusado] = Field(default=[], max_length=MAX_RECUSADOS)
     # `Annotated[str, Field(...)]` dentro da lista: o limite vale para CADA alerta, não para a lista.
     alertas: list[Annotated[str, Field(min_length=1, max_length=MAX_ALERTA)]] = Field(default=[], max_length=MAX_ALERTAS)
-    resumo: str = Field(default="", max_length=MAX_RESUMO)
+    resumo_conferido: str = Field(default="", max_length=MAX_RESUMO_CONFERIDO)
+    resumo_da_llm: str = Field(default="", max_length=MAX_RESUMO)

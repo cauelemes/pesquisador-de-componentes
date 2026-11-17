@@ -25,14 +25,17 @@ from ..compartilhado.modelos import (
     MAX_ALERTA,
     MAX_ALERTAS,
     MAX_RESUMO,
+    MAX_MOTIVO,
+    MAX_RECUSADOS,
     MAX_URL,
     AchadoComponente,
+    AchadoRecusado,
     PaginaLida,
     PedidoComponente,
     ResultadoPesquisa,
 )
 from . import tavily_client
-from .conferencia import conferir_achados, normalizar_texto
+from .conferencia import alertas_do_comentario, conferir_achados, montar_resumo_conferido, normalizar_texto
 from .prompts import _P_ABERTURA, _P_ENTREGA, _P_REGRAS, PROMPT_SISTEMA  # noqa: F401 (os blocos são reexportados)
 from .urls import normalizar_url
 
@@ -188,7 +191,8 @@ class _Ciclo:
         self.consultas: set[str] = set()  # consultas já feitas, normalizadas
         self.validos: dict[str, AchadoComponente] = {}  # chave: MPN normalizado (o mesmo achado não entra 2x)
         self.alertas: list[str] = []
-        self.resumo = ""
+        self.recusados: dict[str, AchadoRecusado] = {}  # chave: MPN normalizado; sai daqui se depois passar
+        self.resumo_da_llm = ""  # texto livre da LLM: guardado, mas NÃO conferido
         self.revisao_usada = False
         self.encerrado = False
         self.cancelado = False
@@ -241,12 +245,15 @@ class _Ciclo:
         """Uma chamada à LLM e a execução das ferramentas pedidas. Devolve False se o ciclo deve parar."""
         numero = len(self.passos) + 1
         cortes = 0
+        gasto_da_cortada = {"tokens_entrada": 0, "tokens_saida": 0, "tokens_raciocinio": 0, "tokens_em_cache": 0}
         try:
             resposta = self._chamar_llm(tool_choice)
             # finish_reason "length": a resposta acabou no MEIO (o raciocínio gastou os tokens). O texto ou o JSON da
             # ferramenta vieram pela metade, então NÃO entram no histórico. Pedimos brevidade e tentamos UMA vez mais.
             if resposta.motivo_parada == "length":
                 cortes = 1
+                # A tentativa cortada também foi COBRADA: seus tokens entram no registro do passo.
+                gasto_da_cortada = {campo: getattr(resposta, campo) for campo in gasto_da_cortada}
                 self.alertas.append(f"passo {numero}: resposta cortada por limite de tokens; nova tentativa")
                 self.mensagens.append({"role": "user", "content": _AVISO_CORTE})
                 resposta = self._chamar_llm(tool_choice)
@@ -261,9 +268,8 @@ class _Ciclo:
             "forcado": final,
             "cortes_por_tokens": cortes,
             "texto": resposta.texto[:1000],
-            "tokens_entrada": resposta.tokens_entrada,
-            "tokens_saida": resposta.tokens_saida,
-            "tokens_raciocinio": resposta.tokens_raciocinio,
+            # Soma das tentativas do passo (a cortada, se houve, e a última).
+            **{campo: gasto + getattr(resposta, campo) for campo, gasto in gasto_da_cortada.items()},
             "ferramentas": [],
         }
         self.passos.append(registro)
@@ -356,15 +362,21 @@ class _Ciclo:
     def _registrar(self, argumentos: str, final: bool) -> str:
         dados = ArgsRegistro.model_validate_json(argumentos)  # inválido -> ValidationError -> a LLM corrige
         if dados.resumo:
-            self.resumo = dados.resumo
+            self.resumo_da_llm = dados.resumo  # o argumento da ferramenta se chama `resumo`; aqui guardamos com o rótulo certo
 
         # Regra 4: TODO registro passa pela conferência determinística.
         conferencia = conferir_achados(dados.achados, self.paginas, self.pedido)
         self.alertas.extend(conferencia.alertas)
         recusados = [c for c in conferencia.achados if c.situacao == "recusado"]
         for conferido in conferencia.achados:
+            chave = normalizar_texto(conferido.achado.mpn)
             if conferido.situacao == "valido":
-                self.validos[normalizar_texto(conferido.achado.mpn)] = conferido.achado  # já com evidências corrigidas
+                self.validos[chave] = conferido.achado  # já com evidências corrigidas
+                self.recusados.pop(chave, None)  # recusado antes e corrigido na revisão: não é mais recusado
+            elif chave not in self.validos:
+                self.recusados[chave] = AchadoRecusado(
+                    fabricante=conferido.achado.fabricante, mpn=conferido.achado.mpn, motivo=conferido.motivo[:MAX_MOTIVO]
+                )
 
         faltam = MIN_ACHADOS_VALIDOS - len(self.validos)
         if final or (dados.definitivo and (faltam <= 0 or self.revisao_usada)):
@@ -388,6 +400,10 @@ class _Ciclo:
 
     # ----------------------------------------------------------------------------------------------------------------
     def _relatorio(self) -> RelatorioPesquisa:
+        validos = list(self.validos.values())[:MAX_ACHADOS]
+        recusados = list(self.recusados.values())[:MAX_RECUSADOS]
+        # O comentário da LLM ainda cita um componente que o código recusou? Avisamos (ele não vira o resumo).
+        self.alertas.extend(alertas_do_comentario(self.resumo_da_llm, recusados))
         if len(self.validos) < MIN_ACHADOS_VALIDOS and not self.cancelado:
             self.alertas.append(f"apenas {len(self.validos)} achado(s) válido(s) (meta: {MIN_ACHADOS_VALIDOS})")
         # Sem repetidos, cada um com no máximo MAX_ALERTA caracteres e no máximo MAX_ALERTAS (limites do modelo).
@@ -395,7 +411,8 @@ class _Ciclo:
         if len(alertas) > MAX_ALERTAS:
             alertas = alertas[: MAX_ALERTAS - 1] + [f"... e mais {len(alertas) - MAX_ALERTAS + 1} alerta(s)"]
         resultado = ResultadoPesquisa(
-            achados=list(self.validos.values())[:MAX_ACHADOS], alertas=alertas, resumo=self.resumo
+            achados=validos, recusados=recusados, alertas=alertas, resumo_da_llm=self.resumo_da_llm,
+            resumo_conferido=montar_resumo_conferido(validos, recusados),  # escrito pelo CÓDIGO: bate com o resultado
         )
         return RelatorioPesquisa(resultado=resultado, passos=self.passos, paginas_lidas=self.paginas,
                                  orcamento=self.orc, paginas_com_erro=self.falhas)

@@ -1,14 +1,14 @@
-"""Contador de uso de UMA sessão: tokens da Together e créditos do Tavily.
+"""Contador de uso: tokens da Together e créditos do Tavily.
 
-Por que existe: cada chamada à Together e ao Tavily gasta dinheiro, e o gasto é feito em vários pontos (conferidor,
-requisitos, agentes de pesquisa, texto, análise de imagens). Este módulo soma tudo num lugar só, sem que os
-agentes precisem passar um contador de mão em mão: a página ATIVA um `ColetorDeUso` para a sessão (`ativar`) e os
-clientes (`together_client`, `tavily_client`) registram o que gastam. Sem coletor ativo (scripts de terminal, testes
-de backend), os registros não fazem nada.
+Por que existe: cada chamada à Together e ao Tavily gasta dinheiro, e o gasto acontece em vários pontos do sistema.
+Este módulo soma tudo num lugar só, sem que o código precise passar um contador de mão em mão: quem quer medir ATIVA
+um `ColetorDeUso` (`ativar` ou `usando`) e os clientes (`together_client`, `tavily_client`) registram o que gastam.
+Sem coletor ativo (scripts de terminal, a maior parte dos testes), os registros não fazem nada.
 
 Os tokens têm DOIS contadores, porque nem sempre a Together diz quanto gastou:
   - PRINCIPAL (`tokens`): só o que a Together CONFIRMOU no campo `usage` da resposta. É exato (é a contagem do próprio
-    provedor), mas deixa de fora o que não foi confirmado.
+    provedor), mas deixa de fora o que não foi confirmado. Inclui, como PARTES da entrada e da saída, os tokens
+    servidos do cache e os gastos em raciocínio.
   - PESSIMISTA (`tokens_com_falhas`): o principal MAIS uma ESTIMATIVA do que não foi confirmado: pedidos que falharam
     (a resposta de um erro não traz o uso, e não sabemos se a Together cobrou) e respostas que vieram sem `usage`. A
     estimativa é só da ENTRADA (a saída de um pedido que falhou é desconhecida), pelo tamanho do que foi enviado:
@@ -17,9 +17,9 @@ Os tokens têm DOIS contadores, porque nem sempre a Together diz quanto gastou:
 Os créditos do Tavily são os que a própria resposta informa (`usage.credits`); se a resposta não trouxer, usamos a regra
 documentada do Tavily e marcamos como ESTIMADO.
 
-O coletor vale por sessão (uma aba do navegador) e zera ao atualizar a página, como o limite de uso (`protecao.py`).
-As pesquisas em segundo plano rodam em outra thread, que NÃO herda o contexto de quem a criou: `frontend/execucao.py`
-copia o contexto para ela, e é por isso que o coletor é uma `ContextVar`.
+O coletor ativo fica numa `ContextVar` (uma variável "por contexto de execução"): cada thread ou tarefa vê o seu.
+Uma thread nova NÃO herda o contexto de quem a criou; para medir o que ela gasta, copie o contexto para ela
+(`contextvars.copy_context().run(...)`).
 """
 
 import contextvars
@@ -36,38 +36,22 @@ CARACTERES_POR_TOKEN = 3.0  # português tem de 3 a 4 caracteres por token; usar
 TOKENS_ESTIMADOS_POR_IMAGEM = 1500
 
 
-# Para quem abrir só o arquivo `uso_da_sessao.json` do pacote: o que cada parte do resumo significa (o menu lateral tem
-# as mesmas explicações nas dicas). Texto fixo nosso.
-LEGENDA_DO_RESUMO = {
-    "retrato_de": "Quando este arquivo foi montado (UTC). O gasto é o desse momento: pode não incluir pedidos feitos depois da "
-                  "última atualização da página.",
-    "tokens": "CONFIRMADOS pela Together (o campo `usage` de cada resposta): é a contagem do próprio provedor, exata. Não inclui "
-              "pedidos que falharam, porque neles a Together não informa o uso.",
-    "nao_confirmado": "Pedidos sem confirmação de uso: os que falharam (a Together pode ter cobrado) e os que deram certo mas vieram "
-                      "sem `usage`. `tokens_estimados` é uma ESTIMATIVA só da entrada (3 caracteres por token, de propósito alta; "
-                      "uma imagem vale um valor fixo); a saída desses pedidos é desconhecida.",
-    "tokens_com_falhas": "Contador PESSIMISTA: tokens confirmados + tokens estimados dos pedidos sem confirmação. É um teto "
-                         "aproximado, não uma contagem exata.",
-    "tavily": "Créditos do Tavily: `creditos_confirmados` vieram na resposta (`usage.credits`); `creditos_estimados` usam a regra "
-              "documentada (busca = 1; leitura = 1 a cada 5 páginas) quando a resposta não informou.",
-    "por_modelo": "O mesmo, separado por modelo da Together (o nome enviado à API).",
-}
-
-
 @dataclass
 class UsoDoModelo:
-    """O que um modelo gastou na sessão."""
+    """O que um modelo gastou enquanto o coletor esteve ativo."""
 
     chamadas: int = 0  # pedidos CONFIRMADOS (a Together devolveu o uso)
     tokens_entrada: int = 0
     tokens_saida: int = 0
+    tokens_em_cache: int = 0  # PARTE da entrada que veio do cache (mais barata); já incluída em `tokens_entrada`
+    tokens_raciocinio: int = 0  # PARTE da saída gasta raciocinando; já incluída em `tokens_saida`
     chamadas_com_falha: int = 0  # pedidos que falharam (erro, tempo esgotado...): o uso é desconhecido
     chamadas_sem_uso: int = 0  # pedidos que deram certo mas vieram sem o campo `usage`
     tokens_estimados_nao_confirmados: int = 0  # a estimativa de entrada dos dois tipos acima
 
 
 class ColetorDeUso:
-    """O uso acumulado de uma sessão. Seguro para várias threads (a pesquisa roda numa e a página lê noutra)."""
+    """O uso acumulado enquanto ativo. Seguro para várias threads (uma pode registrar enquanto outra lê)."""
 
     def __init__(self) -> None:
         self._trava = threading.Lock()
@@ -77,13 +61,17 @@ class ColetorDeUso:
     def _do_modelo(self, modelo: str) -> UsoDoModelo:
         return self._por_modelo.setdefault(modelo, UsoDoModelo())
 
-    def registrar_sucesso(self, modelo: str, tokens_entrada: int, tokens_saida: int) -> None:
-        """Um pedido em que a Together CONFIRMOU o uso."""
+    def registrar_sucesso(
+        self, modelo: str, tokens_entrada: int, tokens_saida: int, *, tokens_em_cache: int = 0, tokens_raciocinio: int = 0
+    ) -> None:
+        """Um pedido em que a Together CONFIRMOU o uso. Cache e raciocínio são PARTES da entrada e da saída."""
         with self._trava:
             m = self._do_modelo(modelo)
             m.chamadas += 1
             m.tokens_entrada += max(int(tokens_entrada), 0)
             m.tokens_saida += max(int(tokens_saida), 0)
+            m.tokens_em_cache += max(int(tokens_em_cache), 0)
+            m.tokens_raciocinio += max(int(tokens_raciocinio), 0)
 
     def registrar_falha(self, modelo: str, tokens_estimados: int) -> None:
         """Um pedido que falhou: o uso é desconhecido, então só entra a estimativa da entrada (contador pessimista)."""
@@ -122,6 +110,8 @@ class ColetorDeUso:
         return {
             "tokens": {
                 "entrada": entrada, "saida": saida, "total": entrada + saida,
+                "em_cache": sum(m["tokens_em_cache"] for m in modelos.values()),  # parte da entrada
+                "raciocinio": sum(m["tokens_raciocinio"] for m in modelos.values()),  # parte da saída
                 "pedidos": sum(m["chamadas"] for m in modelos.values()),
             },
             "nao_confirmado": {
@@ -163,9 +153,13 @@ def coletor_ativo() -> ColetorDeUso | None:
     return _coletor_atual.get()
 
 
-def registrar_sucesso(modelo: str, tokens_entrada: int, tokens_saida: int) -> None:
+def registrar_sucesso(
+    modelo: str, tokens_entrada: int, tokens_saida: int, *, tokens_em_cache: int = 0, tokens_raciocinio: int = 0
+) -> None:
     if (coletor := coletor_ativo()) is not None:
-        coletor.registrar_sucesso(modelo, tokens_entrada, tokens_saida)
+        coletor.registrar_sucesso(
+            modelo, tokens_entrada, tokens_saida, tokens_em_cache=tokens_em_cache, tokens_raciocinio=tokens_raciocinio
+        )
 
 
 def registrar_falha(modelo: str, tokens_estimados: int) -> None:

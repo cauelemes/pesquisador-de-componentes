@@ -20,6 +20,7 @@ from backend.compartilhado.modelos import PaginaLida, PedidoComponente, Resultad
 from backend.pesquisa import agente as ag
 from backend.pesquisa import tavily_client
 from backend.pesquisa import testar_agente
+from backend.servico import pesquisa as servico
 
 EXEMPLO = Path(__file__).resolve().parent.parent / "exemplos" / "pedido_regulador.json"
 PEDIDO = PedidoComponente.model_validate_json(EXEMPLO.read_text(encoding="utf-8"))
@@ -133,7 +134,10 @@ class TestCicloFeliz(unittest.TestCase):
 
         self.assertEqual([a.mpn for a in relatorio.resultado.achados], ["AC1117-3.3", "BT33", "GM3301"])
         self.assertEqual(relatorio.resultado.alertas, [])
-        self.assertEqual(relatorio.resultado.resumo, "três LDOs")
+        self.assertEqual(relatorio.resultado.resumo_da_llm, "três LDOs")  # o texto da LLM, guardado com o rótulo certo
+        self.assertEqual(relatorio.resultado.recusados, [])
+        self.assertEqual(relatorio.resultado.resumo_conferido, "A LLM propôs 3 componentes; 3 passaram na conferência: "
+                         "AC1117-3.3 (Acme), BT33 (Beta), GM3301 (Gama).")
         self.assertEqual(len(vistas), 3)
         self.assertEqual(set(relatorio.paginas_lidas), {U1, U2, U3})
         orc = relatorio.orcamento
@@ -344,6 +348,36 @@ class TestConferenciaERevisao(unittest.TestCase):
         self.assertIn("apenas 2 achado(s) válido(s) (meta: 3)", relatorio.resultado.alertas)
         self.assertIn("XX999: MPN não aparece na página", relatorio.resultado.alertas)
 
+    def test_recusado_vai_para_a_lista_com_o_motivo(self):
+        ruim = resposta(registrar([*ACHADOS[:2], self.MPN_ERRADO]))
+        relatorio, _, _, _ = rodar([LER_TUDO, ruim, resposta(registrar([self.MPN_ERRADO]))])
+        resultado = relatorio.resultado
+        self.assertEqual([(r.fabricante, r.mpn, r.motivo) for r in resultado.recusados],
+                         [("Gama", "XX999", "MPN não aparece na página")])
+        self.assertIn("Recusado: XX999 (Gama): MPN não aparece na página.", resultado.resumo_conferido)
+        self.assertTrue(resultado.resumo_conferido.startswith("A LLM propôs 3 componentes; 2 passaram"))
+
+    def test_recusado_corrigido_na_revisao_sai_da_lista(self):
+        # O MESMO MPN (GM3301): recusado com uma URL que não foi lida, e aceito na revisão com a URL certa.
+        sem_pagina = achado("Gama", "GM3301", "https://nao-lida.example/gm3301")
+        roteiro = [LER_TUDO, resposta(registrar([*ACHADOS[:2], sem_pagina])), resposta(registrar([ACHADOS[2]]))]
+        resultado = rodar(roteiro)[0].resultado
+        self.assertEqual(len(resultado.achados), 3)
+        self.assertEqual(resultado.recusados, [])  # passou depois: não é mais recusado
+        self.assertNotIn("Recusado", resultado.resumo_conferido)
+
+    def test_comentario_da_llm_que_cita_recusado_gera_alerta(self):
+        def registrar_com(achados, resumo):
+            return chamada("registrar_resultado", achados=achados, resumo=resumo, definitivo=True)
+
+        comentario = "Encontrei 3 LDOs com provas em datasheets: AC1117-3.3, BT33 e XX999."
+        roteiro = [LER_TUDO, resposta(registrar_com([*ACHADOS[:2], self.MPN_ERRADO], comentario)),
+                   resposta(registrar_com([self.MPN_ERRADO], comentario))]
+        resultado = rodar(roteiro)[0].resultado
+        self.assertEqual(resultado.resumo_da_llm, comentario)  # guardado como veio...
+        self.assertNotEqual(resultado.resumo_conferido, comentario)  # ...mas nunca no lugar do conferido
+        self.assertIn("o comentário da LLM cita XX999, que foi recusado", resultado.alertas)
+
     def test_registro_parcial_nao_gasta_a_revisao(self):
         roteiro = [LER_TUDO, resposta(registrar(ACHADOS[:1], definitivo=False)), resposta(registrar(ACHADOS[1:]))]
         relatorio, vistas, _, _ = rodar(roteiro)
@@ -492,7 +526,8 @@ class TestCli(unittest.TestCase):
             return rodar([LER_TUDO, resposta(registrar(ACHADOS))], **opcoes)[0]
 
         saida = io.StringIO()
-        with patch.object(testar_agente, "pesquisar", wraps=pesquisar_simulado) as mock, redirect_stdout(saida):
+        # O CLI chama o serviço, e o serviço chama `pesquisar`: é esse nome (no módulo do serviço) que trocamos.
+        with patch.object(servico, "pesquisar", wraps=pesquisar_simulado) as mock, redirect_stdout(saida):
             codigo = testar_agente.main([str(EXEMPLO), *argumentos])
         return codigo, saida.getvalue(), mock
 
