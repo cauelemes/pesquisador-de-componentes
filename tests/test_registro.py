@@ -151,10 +151,48 @@ class TestSalvarECarregar(unittest.TestCase):
                 rg.carregar_registro(caminho)
 
     def test_arquivo_grande_demais_nem_e_lido(self):
-        with pasta_temporaria() as pasta, patch.object(rg, "MAX_BYTES_DO_ARQUIVO", 100):
+        with pasta_temporaria() as pasta:
             caminho = rg.salvar_registro(registro_feliz(), Path(pasta) / "r.json")
-            with self.assertRaisesRegex(ValueError, "grande demais"):
+            with patch.object(rg, "MAX_BYTES_DO_REGISTRO", 100), self.assertRaisesRegex(rg.ErroDeRegistro, "grande demais"):
                 rg.carregar_registro(caminho)
+
+    def test_registro_acima_do_limite_da_erro_claro_e_nao_grava(self):
+        with pasta_temporaria() as pasta, patch.object(rg, "MAX_BYTES_DO_REGISTRO", 1000):
+            caminho = Path(pasta) / "r.json"
+            with self.assertRaisesRegex(rg.ErroDeRegistro, r"acima do limite .* Nada foi gravado \(e nada foi cortado\)"):
+                rg.salvar_registro(registro_feliz(), caminho)
+            self.assertFalse(caminho.exists())
+
+
+class TestRegistroSemCortes(unittest.TestCase):
+    def test_argumentos_longos_sobrevivem_completos(self):
+        # Uma chamada com argumentos de ~6 mil caracteres (recusada pelo `extra`, mas registrada como veio).
+        enorme = json.dumps({"achados": ta.ACHADOS, "resumo": "r" * 1500, "definitivo": True, "extra": "y" * 4000})
+        self.assertGreater(len(enorme), 6000)
+        roteiro = [ta.LER_TUDO, ta.resposta(ta.chamada("registrar_resultado", argumentos_json=enorme)),
+                   ta.resposta(ta.registrar(ta.ACHADOS))]
+        original = rg.montar_registro(ta.PEDIDO, ta.rodar(roteiro)[0], INICIO, FIM, "m", None)
+        with pasta_temporaria() as pasta:
+            carregado = rg.carregar_registro(rg.salvar_registro(original, Path(pasta) / "r.json"))
+        argumentos = carregado.passos[1].ferramentas[0].argumentos
+        self.assertEqual(argumentos, enorme)  # completo
+        self.assertEqual(json.loads(argumentos)["extra"], "y" * 4000)  # e ainda é JSON válido
+
+    def test_resultado_da_ferramenta_e_o_que_a_llm_recebeu(self):
+        def extrair_longo(urls, *, foco):  # páginas de 3 mil caracteres: antes, o registro as cortaria em 500
+            return [PaginaLida(url=u, conteudo=ta.PAGINAS[u] + " detalhe" * 375) for u in urls]
+
+        relatorio, vistas, _, _ = ta.rodar([ta.LER_TUDO, ta.resposta(ta.registrar(ta.ACHADOS))], extrair=extrair_longo)
+        recebidos = [m["content"] for m in vistas[1]["mensagens"] if m["role"] == "tool"]
+        registro = rg.montar_registro(ta.PEDIDO, relatorio, INICIO, FIM, "m", None)
+        gravados = [f.resultado for f in registro.passos[0].ferramentas]
+        self.assertEqual(gravados, recebidos)  # nada cortado: o mesmo texto, inteiro
+        self.assertTrue(all(len(r) > 3000 for r in gravados))  # (antes, tudo era cortado em 500)
+
+    def test_texto_da_llm_completo(self):
+        longo = ta.resposta(ta.ler(ta.U1), texto="t" * 3000)
+        relatorio = ta.rodar([longo, *ta.FIM_SEM_ACHADOS])[0]
+        self.assertEqual(rg.montar_registro(ta.PEDIDO, relatorio, INICIO, FIM, "m", None).passos[0].texto, "t" * 3000)
 
 
 if __name__ == "__main__":

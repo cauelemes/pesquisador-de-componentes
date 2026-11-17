@@ -26,7 +26,9 @@ CAMPO_DA_COLUNA = {"parametro": "parâmetro", "operador": "operador", "valor": "
 # Tabela de requisitos
 # ---------------------------------------------------------------------------------------------------------------------
 def _tabela(linhas: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame(linhas, columns=COLUNAS)
+    """As colunas numéricas viram `float64`: o vazio delas é NaN, que o editor mostra EM BRANCO. (Com `None` numa coluna
+    de tipo genérico, o editor mostrava o texto "None".)"""
+    return pd.DataFrame(linhas, columns=COLUNAS).astype({"valor": "float64", "valor máximo": "float64"})
 
 
 def _tabela_vazia() -> pd.DataFrame:
@@ -182,8 +184,10 @@ def render() -> None:
         column_config={
             "parâmetro": st.column_config.TextColumn("parâmetro", max_chars=80),
             "operador": st.column_config.SelectboxColumn("operador", options=list(OPERADORES), required=True),
-            "valor": st.column_config.NumberColumn("valor"),
-            "valor máximo": st.column_config.NumberColumn("valor máximo", help="só para o operador 'faixa'"),
+            # "localized": o número aparece no formato do navegador (no Brasil, com vírgula decimal).
+            "valor": st.column_config.NumberColumn("valor", format="localized"),
+            "valor máximo": st.column_config.NumberColumn("valor máximo", format="localized",
+                                                          help="só para o operador 'faixa'"),
             "unidade": st.column_config.TextColumn("unidade", max_chars=16, help="ex.: V, mA, kΩ, MHz, °C"),
         },
     )

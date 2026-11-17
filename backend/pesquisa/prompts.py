@@ -20,7 +20,8 @@ descobrir nomes de peças.
 5. Não repita consultas (consulta repetida é recusada). Varie termos, fabricante e idioma (inglês costuma render mais).
 6. Respeite o orçamento mostrado a cada passo: ele acaba.
 7. Toda evidência confirmada precisa de `citacao` com a frase copiada LITERALMENTE do texto de uma página que você \
-leu; se não conseguir citar, use `nao_encontrado`."""
+leu; se não conseguir citar, use `nao_encontrado`. O campo `citacao` é obrigatório em toda evidência; copie a frase \
+da página; sem frase, use `nao_encontrado` com `citacao` vazia."""
 
 _P_ENTREGA = """Como registrar (registrar_resultado):
 - Registre assim que tiver o suficiente (3 componentes bem provados); não espere o orçamento acabar. Use \

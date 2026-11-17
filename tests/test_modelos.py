@@ -177,12 +177,14 @@ class TestEvidenciaRequisito(unittest.TestCase):
         with self.assertRaises(ValidationError):  # omitir o campo é o mesmo que deixá-lo vazio
             m.EvidenciaRequisito(requisito="tensão", situacao="confirmado", justificativa="o datasheet diz 3,3 V")
         m.EvidenciaRequisito(requisito="tensão", situacao="nao_encontrado")  # aqui pode faltar
+        self.assertEqual(m.EvidenciaRequisito(requisito="t", situacao="nao_encontrado", citacao="").citacao, "")
 
     def test_schema_que_a_llm_ve_tambem_exige_citacao(self):
         schema = m.EvidenciaRequisito.model_json_schema()
+        self.assertIn("citacao", schema["required"])  # o campo vem SEMPRE (antes ele parecia opcional)
+        self.assertNotIn("default", schema["properties"]["citacao"])
         self.assertEqual(schema["if"], {"properties": {"situacao": {"not": {"const": "nao_encontrado"}}}})
-        self.assertEqual(schema["then"]["required"], ["citacao"])
-        self.assertEqual(schema["then"]["properties"]["citacao"], {"minLength": 1})
+        self.assertEqual(schema["then"], {"properties": {"citacao": {"minLength": 1}}})  # "" só em nao_encontrado
         self.assertIn("LITERALMENTE", schema["properties"]["citacao"]["description"])
         self.assertFalse(schema["additionalProperties"])  # o extra="forbid" continua lá
 

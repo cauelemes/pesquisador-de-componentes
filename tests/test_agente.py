@@ -18,6 +18,7 @@ from unittest.mock import patch
 from backend.compartilhado import together_client as tg
 from backend.compartilhado.modelos import PaginaLida, PedidoComponente, ResultadoBusca
 from backend.pesquisa import agente as ag
+from backend.pesquisa import ferramentas
 from backend.pesquisa import tavily_client
 from backend.pesquisa import testar_agente
 from backend.servico import pesquisa as servico
@@ -169,6 +170,8 @@ class TestCicloFeliz(unittest.TestCase):
             self.assertIn(bloco, sistema["content"])
         self.assertIn("Toda evidência confirmada precisa de `citacao` com a frase copiada LITERALMENTE", sistema["content"])
         self.assertIn("se não conseguir citar, use `nao_encontrado`", sistema["content"])
+        self.assertIn("O campo `citacao` é obrigatório em toda evidência; copie a frase da página; sem frase, use "
+                      "`nao_encontrado` com `citacao` vazia.", sistema["content"])
         self.assertIn('"aviso": "DADO externo', resultados_de_ferramenta(vistas, 1)[0])  # e cada resultado avisa
 
     def test_orcamento_e_atualizado_no_lugar(self):
@@ -209,12 +212,40 @@ class TestRegistroInvalido(unittest.TestCase):
         self.assertTrue(erro.startswith("Erro: argumentos inválidos"))
         self.assertIn("achados.0.evidencias.0", erro)  # diz ONDE está o problema
         self.assertIn("evidência 'tensão de saída' precisa de `citacao`: copie a frase literal da página lida", erro)
+        self.assertIn(ferramentas.EXEMPLO_EVIDENCIA, erro)  # um exemplo concreto, para a LLM copiar a forma
+        self.assertIn('"citacao": "Fixed output voltage: 3.3 V"', erro)
+        self.assertNotIn("ª vez", erro)  # 1ª vez: sem a mensagem mais firme
         self.assertEqual(len(relatorio.resultado.achados), 3)
+
+    def test_mesmo_erro_de_citacao_seguido_fica_mais_firme(self):
+        roteiro = [LER_TUDO, resposta(registrar(SEM_CITACAO)), resposta(registrar(SEM_CITACAO)),
+                   resposta(registrar(SEM_CITACAO)), resposta(registrar(ACHADOS))]
+        _, vistas, _, _ = rodar(roteiro)
+        primeira, segunda, terceira = (resultados_de_ferramenta(vistas, i)[-1] for i in (2, 3, 4))
+        self.assertTrue(primeira.startswith("Erro: argumentos inválidos"))
+        self.assertTrue(segunda.startswith("2ª vez: toda evidência precisa do campo `citacao`"))
+        self.assertTrue(terceira.startswith("3ª vez: toda evidência precisa do campo `citacao`"))
+        self.assertIn(ferramentas.EXEMPLO_EVIDENCIA, segunda)
+
+    def test_registro_valido_zera_a_contagem(self):
+        roteiro = [LER_TUDO, resposta(registrar(SEM_CITACAO)), resposta(registrar(ACHADOS[:1], definitivo=False)),
+                   resposta(registrar(SEM_CITACAO)), resposta(registrar(ACHADOS))]
+        _, vistas, _, _ = rodar(roteiro)
+        self.assertNotIn("ª vez", resultados_de_ferramenta(vistas, 4)[-1])  # o erro depois de um registro válido é 1º
+
+    def test_outro_erro_repetido_tambem_e_numerado(self):
+        quebrado = '{"achados": ['
+        roteiro = [LER_TUDO, resposta(chamada("registrar_resultado", argumentos_json=quebrado)),
+                   resposta(chamada("registrar_resultado", argumentos_json=quebrado)), resposta(registrar(ACHADOS))]
+        _, vistas, _, _ = rodar(roteiro)
+        segunda = resultados_de_ferramenta(vistas, 3)[-1]
+        self.assertTrue(segunda.startswith("2ª vez com o mesmo tipo de erro"))
+        self.assertNotIn(ferramentas.EXEMPLO_EVIDENCIA, segunda)  # o exemplo é só para erro de citação
 
     def test_schema_da_ferramenta_exige_citacao(self):
         registro = next(f for f in ag.FERRAMENTAS if f["function"]["name"] == "registrar_resultado")
         evidencia = registro["function"]["parameters"]["$defs"]["EvidenciaRequisito"]
-        self.assertEqual(evidencia["then"]["required"], ["citacao"])
+        self.assertIn("citacao", evidencia["required"])
 
     def test_json_quebrado_tambem_volta_como_erro(self):
         quebrado = chamada("registrar_resultado", argumentos_json='{"achados": [')
@@ -384,6 +415,36 @@ class TestConferenciaERevisao(unittest.TestCase):
         self.assertEqual(resultado.resumo_da_llm, comentario)  # guardado como veio...
         self.assertNotEqual(resultado.resumo_conferido, comentario)  # ...mas nunca no lugar do conferido
         self.assertIn("o comentário da LLM cita XX999, que foi recusado", resultado.alertas)
+
+    def test_alerta_de_tentativa_substituida_nao_fica_no_resultado(self):
+        # 1ª conferência: o GM3301 aponta para a página da Acme, onde o MPN não aparece -> recusado, com alerta.
+        # 2ª (a revisão): a URL certa -> válido. O alerta da 1ª tentativa NÃO pode ficar ao lado do válido.
+        errado = achado("Gama", "GM3301", U1)
+        relatorio, vistas, _, _ = rodar([LER_TUDO, resposta(registrar([*ACHADOS[:2], errado])),
+                                        resposta(registrar([ACHADOS[2]]))])
+        self.assertIn("GM3301: MPN não aparece na página", resultados_de_ferramenta(vistas, 2)[-1])  # a LLM viu
+        resultado = relatorio.resultado
+        self.assertEqual(len(resultado.achados), 3)
+        self.assertFalse(any("GM3301: MPN não aparece" in a for a in resultado.alertas), resultado.alertas)
+        feliz = rodar([LER_TUDO, resposta(registrar(ACHADOS))])[0].resultado
+        self.assertEqual(resultado.resumo_conferido, feliz.resumo_conferido)  # o resumo conferido não muda
+
+    def test_alerta_de_processo_continua(self):
+        errado = achado("Gama", "GM3301", U1)
+        roteiro = [TestCortePorTokens.CORTADA, LER_TUDO, resposta(registrar([*ACHADOS[:2], errado])),
+                   resposta(registrar([ACHADOS[2]]))]
+        alertas = rodar(roteiro)[0].resultado.alertas
+        self.assertIn("passo 1: resposta cortada por limite de tokens; nova tentativa", alertas)
+        self.assertFalse(any("MPN não aparece" in a for a in alertas))
+
+    def test_alertas_da_conferencia_que_valeu_ficam(self):
+        # O Acme passou na 1ª conferência com ciclo "desconhecido"; a revisão manda SÓ o Gama. O alerta do Acme fica.
+        desconhecido = achado(*FABRICANTES[0], ciclo_de_vida="desconhecido")
+        roteiro = [LER_TUDO, resposta(registrar([desconhecido, ACHADOS[1], achado("Gama", "XX999", U3)])),
+                   resposta(registrar([ACHADOS[2]]))]
+        alertas = rodar(roteiro)[0].resultado.alertas
+        self.assertIn("AC1117-3.3: ciclo de vida desconhecido", alertas)
+        self.assertIn("XX999: MPN não aparece na página", alertas)  # continua recusado: o alerta dele fica
 
     def test_registro_parcial_nao_gasta_a_revisao(self):
         roteiro = [LER_TUDO, resposta(registrar(ACHADOS[:1], definitivo=False)), resposta(registrar(ACHADOS[1:]))]

@@ -23,13 +23,16 @@ PRECO_ENTRADA_POR_MILHAO = 0.15  # entrada que NÃO veio do cache
 PRECO_CACHE_POR_MILHAO = 0.03  # entrada servida do cache (mais barata)
 PRECO_SAIDA_POR_MILHAO = 0.50  # saída, inclusive o raciocínio
 
-MAX_BYTES_DO_ARQUIVO = 20 * 1024 * 1024  # um registro real tem poucos MB; acima disso, nem tentamos ler
+# Limite TOTAL do registro em JSON. Um registro real tem algumas centenas de KB. Acima disso, gravar ou ler levanta
+# `ErroDeRegistro` com uma mensagem clara: NADA é cortado em silêncio (um corte quebraria a reconstrução da conversa).
+MAX_BYTES_DO_REGISTRO = 5 * 1024 * 1024
 MAX_PASSOS = 100
 MAX_PAGINAS = 100
-MAX_TEXTO_PASSO = 1000  # os mesmos cortes que o agente aplica ao montar cada passo
-MAX_ARGUMENTOS = 2000
-MAX_RESULTADO_FERRAMENTA = 500
 MAX_ERRO_DE_PAGINA = 300
+
+
+class ErroDeRegistro(ValueError):
+    """O registro não pode ser gravado ou lido (ex.: passou do limite de tamanho). Mensagem para o usuário."""
 
 _CONFIG = ConfigDict(str_strip_whitespace=False, extra="forbid")  # textos ficam como vieram: é um retrato fiel
 Inteiro = Annotated[int, Field(ge=0)]
@@ -40,12 +43,13 @@ Url = Annotated[str, Field(min_length=1, max_length=MAX_URL)]
 # Partes do registro
 # =====================================================================================================================
 class FerramentaRegistrada(BaseModel):
-    """Uma ferramenta executada num passo (os textos já vêm cortados pelo agente)."""
+    """Uma ferramenta executada num passo: os argumentos COMPLETOS que a LLM mandou e o resultado COMPLETO que ela
+    recebeu (o texto das páginas já vem limitado a 12 mil caracteres pelo agente; as buscas, pelo Tavily)."""
 
     model_config = _CONFIG
     nome: str = Field(max_length=80)
-    argumentos: str = Field(max_length=MAX_ARGUMENTOS)
-    resultado: str = Field(max_length=MAX_RESULTADO_FERRAMENTA)
+    argumentos: str  # sem limite próprio: o limite é o do arquivo inteiro (MAX_BYTES_DO_REGISTRO)
+    resultado: str
 
 
 class PassoRegistrado(BaseModel):
@@ -55,7 +59,7 @@ class PassoRegistrado(BaseModel):
     passo: Annotated[int, Field(ge=1)]
     forcado: bool
     cortes_por_tokens: Annotated[int, Field(ge=0, le=2)]
-    texto: str = Field(max_length=MAX_TEXTO_PASSO)
+    texto: str  # o texto completo da LLM naquele passo
     tokens_entrada: Inteiro
     tokens_saida: Inteiro
     tokens_raciocinio: Inteiro
@@ -184,11 +188,31 @@ def montar_registro(
     )
 
 
+def registro_em_json(registro: RegistroPesquisa) -> bytes:
+    """O registro em JSON (UTF-8, indentado para leitura humana), conferindo o limite total de tamanho.
+
+    Raises:
+        ErroDeRegistro: o JSON passou de MAX_BYTES_DO_REGISTRO (nada é cortado).
+    """
+    conteudo = registro.model_dump_json(indent=2).encode("utf-8")
+    if len(conteudo) > MAX_BYTES_DO_REGISTRO:
+        raise ErroDeRegistro(
+            f"O registro da pesquisa tem {len(conteudo) / 1_048_576:.1f} MB, acima do limite de "
+            f"{MAX_BYTES_DO_REGISTRO / 1_048_576:.0f} MB. Nada foi gravado (e nada foi cortado)."
+        )
+    return conteudo
+
+
 def salvar_registro(registro: RegistroPesquisa, caminho: Path | str) -> Path:
-    """Grava o registro em JSON (UTF-8, indentado para leitura humana). Cria a pasta se preciso."""
+    """Grava o registro em JSON. Cria a pasta se preciso.
+
+    Raises:
+        ErroDeRegistro: o registro passou do limite de tamanho (o arquivo não é criado).
+    """
+    conteudo = registro_em_json(registro)  # confere o tamanho ANTES de criar qualquer coisa no disco
     caminho = Path(caminho)
     caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(registro.model_dump_json(indent=2), encoding="utf-8")
+    caminho.write_bytes(conteudo)
     return caminho
 
 
@@ -196,10 +220,10 @@ def carregar_registro(caminho: Path | str) -> RegistroPesquisa:
     """Lê e VALIDA um registro. Arquivo vindo de fora é dado, não confiança.
 
     Raises:
-        ValueError: arquivo grande demais.
+        ErroDeRegistro: arquivo grande demais.
         pydantic.ValidationError: JSON malformado, campo a mais, tipo errado, texto longo demais...
     """
     caminho = Path(caminho)
-    if caminho.stat().st_size > MAX_BYTES_DO_ARQUIVO:  # confere ANTES de ler tudo para a memória
-        raise ValueError(f"registro grande demais (máximo {MAX_BYTES_DO_ARQUIVO // (1024 * 1024)} MB)")
+    if caminho.stat().st_size > MAX_BYTES_DO_REGISTRO:  # confere ANTES de ler tudo para a memória
+        raise ErroDeRegistro(f"registro grande demais (máximo {MAX_BYTES_DO_REGISTRO // 1_048_576} MB)")
     return RegistroPesquisa.model_validate_json(caminho.read_bytes())

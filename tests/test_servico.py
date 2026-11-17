@@ -87,6 +87,12 @@ class TestMontarPacote(unittest.TestCase):
         self.assertEqual(set(pacote.namelist()), {servico.ARQUIVO_PLANILHA, servico.ARQUIVO_REGISTRO,
                                                   servico.ARQUIVO_PEDIDO})
 
+    def test_pacote_com_registro_acima_do_limite_da_erro_claro(self):
+        from backend.pesquisa import registro as rg
+
+        with patch.object(rg, "MAX_BYTES_DO_REGISTRO", 1000), self.assertRaises(rg.ErroDeRegistro):
+            servico.montar_pacote(self.registro, self.achados[:1])
+
     def test_escolha_invalida_e_recusada(self):
         fora = self.achados[0].model_copy(update={"mpn": "OUTRO123"})  # parecido, mas não é um achado válido
         casos = {

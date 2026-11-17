@@ -7,6 +7,7 @@ o rótulo de um widget é interpretado como markdown, então nunca leva texto de
 import streamlit as st
 
 from backend.compartilhado.modelos import ROTULO_RESUMO_DA_LLM, AchadoComponente
+from backend.pesquisa.registro import ErroDeRegistro
 from backend.planilhas.gera_planilha import MAX_ACHADOS_NA_PLANILHA
 from backend.servico import pesquisa as servico
 
@@ -35,7 +36,7 @@ def _gerar() -> None:
     achados = [registro.resultado.achados[i] for i in sorted(estado.escolhidos())]
     try:
         estado.gravar(estado.PACOTE, servico.montar_pacote(registro, achados))
-    except servico.ErroDeEscolha as erro:  # mensagem nossa, para o usuário
+    except (servico.ErroDeEscolha, ErroDeRegistro) as erro:  # mensagens nossas, para o usuário
         estado.gravar(estado.ERRO_AO_GERAR, str(erro))
         return
     estado.gravar(estado.ERRO_AO_GERAR, None)

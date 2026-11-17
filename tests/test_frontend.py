@@ -103,6 +103,18 @@ class TestPedido(BaseApp):
         self.assertEqual([e.value for e in at.error], [])
         self.assertFalse(at.button(key="botao_pesquisar").disabled)
 
+    def test_valor_maximo_vazio_aparece_em_branco_e_nao_como_none(self):
+        import pyarrow as pa
+
+        at = self.clicar(self.abrir(), "botao_exemplo")
+        (editor,) = at.get("dataframe")  # o `st.data_editor` aparece no AppTest como um elemento "dataframe"
+        tabela = pa.ipc.open_stream(editor.proto.arrow_data.data).read_all()  # os dados que vão ao navegador (Arrow)
+        self.assertTrue(pa.types.is_floating(tabela.schema.field("valor máximo").type))  # número, não texto
+        self.assertEqual(tabela.column("valor máximo").to_pylist(), [None, None])  # nulo = célula em branco
+        celulas = [v for linha in tabela.to_pylist() for v in linha.values()]
+        self.assertNotIn("None", celulas)  # nenhuma célula com o TEXTO "None" (o defeito antigo)
+        self.assertEqual(tabela.column("operador").to_pylist(), ["=", "≥"])
+
     def test_apagar_a_categoria_volta_a_desabilitar(self):
         at = self.clicar(self.abrir(), "botao_exemplo")
         at.text_input(key=estado.CAMPO_CATEGORIA).set_value("   ").run()

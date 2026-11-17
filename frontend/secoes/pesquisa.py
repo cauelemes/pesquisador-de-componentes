@@ -1,11 +1,22 @@
 """Etapa 2: a pesquisa em andamento (progresso e "Cancelar") e o desfecho (sucesso, parcial ou erro)."""
 
+import time
+
 import streamlit as st
 
+from backend.pesquisa.progresso import formatar_tempo
 from backend.planilhas.gera_planilha import MAX_ACHADOS_NA_PLANILHA
 
 from .. import estado, texto
 from ..execucao import Trabalho
+
+
+EVENTOS_NA_TELA = 8
+# Rótulos FIXOS por tipo de evento (o texto do evento, que vem da LLM ou da web, vai sempre com st.text).
+ROTULOS_NA_TELA = {
+    "passo": "Passo", "fala_da_llm": "LLM", "busca": "Busca", "leitura": "Leitura",
+    "leitura_falhou": "Leitura falhou", "registro": "Conferência", "correcao": "Conferência", "aviso": "Aviso",
+}
 
 
 def _ir_para_revisao(trabalho: Trabalho) -> None:
@@ -43,10 +54,28 @@ def _progresso() -> None:
     for nome, usado, limite in (("Passos", orc.passos_usados, orc.passos), ("Buscas", orc.buscas_usadas, orc.buscas),
                                 ("Leituras", orc.leituras_usadas, orc.leituras)):
         st.progress(min(usado / limite, 1.0) if limite else 0.0, text=f"{nome}: {usado} de {limite}")
+    st.caption(f"Tempo decorrido: {formatar_tempo(time.monotonic() - trabalho.inicio)}")
+    _atividade(trabalho)
     if trabalho.cancelamento.is_set():
         st.info("Cancelando: a pesquisa para no próximo passo e devolve o que já tiver.")
     else:
         st.button("Cancelar", key="botao_cancelar", on_click=trabalho.cancelamento.set)
+
+
+def _atividade(trabalho: Trabalho) -> None:
+    """O painel "Atividade recente": os últimos eventos, o mais novo primeiro. Só a FALA curta da LLM aparece (o
+    raciocínio interno nem chega aqui)."""
+    texto.rotulo("Atividade recente")
+    eventos = trabalho.ultimos_eventos(EVENTOS_NA_TELA)
+    if not eventos:
+        texto.mostrar("Iniciando...")
+        return
+    for evento in eventos:
+        quando, rotulo, conteudo = st.columns([1, 2, 9])
+        quando.caption(formatar_tempo(evento.segundos))
+        rotulo.caption(ROTULOS_NA_TELA.get(evento.tipo, "Evento"))  # rótulo fixo nosso
+        with conteudo:
+            texto.mostrar(evento.texto)  # texto de fora: SEMPRE literal
 
 
 def _desfecho(trabalho: Trabalho) -> None:

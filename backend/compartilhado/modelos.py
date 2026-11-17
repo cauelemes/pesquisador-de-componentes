@@ -127,6 +127,23 @@ class PedidoComponente(BaseModel):
 # =====================================================================================================================
 
 
+def _schema_da_evidencia(schema: dict) -> None:
+    """Ajusta o schema que a LLM VÊ para `EvidenciaRequisito`.
+
+    No teste real, a LLM omitiu `citacao` várias vezes seguidas: com um valor padrão, o campo parecia opcional (a regra
+    só existia num `if/then`, que o modelo não trata como obrigatório). Agora:
+    - `citacao` está em `required` (o campo vem SEMPRE) e sem `default`;
+    - o `if/then` diz que ela só pode ser "" quando a situação é nao_encontrado.
+    A validação em Python (o `_exige_citacao` abaixo) continua sendo quem decide de fato.
+    """
+    schema["properties"]["citacao"].pop("default", None)
+    obrigatorios = schema.setdefault("required", [])
+    if "citacao" not in obrigatorios:
+        obrigatorios.append("citacao")
+    schema["if"] = {"properties": {"situacao": {"not": {"const": "nao_encontrado"}}}}
+    schema["then"] = {"properties": {"citacao": {"minLength": 1}}}
+
+
 class EvidenciaRequisito(BaseModel):
     """O que a pesquisa achou sobre UM requisito, num componente.
 
@@ -140,15 +157,7 @@ class EvidenciaRequisito(BaseModel):
     A citação é curta (máx. 400 caracteres) de propósito: a prova tem que ser um trecho pontual, fácil de conferir.
     """
 
-    # `json_schema_extra` acrescenta ao schema (o que a LLM vê) a mesma regra do validador abaixo, em JSON Schema:
-    # "SE a situação não é nao_encontrado, ENTÃO citacao é obrigatória e não vazia". Assim a regra aparece nos dois lados.
-    model_config = ConfigDict(
-        **_CONFIG,
-        json_schema_extra={
-            "if": {"properties": {"situacao": {"not": {"const": "nao_encontrado"}}}},
-            "then": {"required": ["citacao"], "properties": {"citacao": {"minLength": 1}}},
-        },
-    )
+    model_config = ConfigDict(**_CONFIG, json_schema_extra=lambda schema: _schema_da_evidencia(schema))
 
     requisito: str = Field(min_length=1, max_length=MAX_NOME)  # o `parametro` do Requisito a que se refere
     situacao: Literal["confirmado", "indicio", "nao_encontrado", "contradiz"]

@@ -13,8 +13,9 @@ from io import BytesIO
 
 from ..compartilhado import uso as contador_de_uso
 from ..compartilhado.modelos import AchadoComponente, PedidoComponente
+from ..pesquisa.progresso import EventoDeProgresso
 from ..pesquisa.agente import MODELO_AGENTE_PESQUISA, TIMEOUT_CHAMADA_SEGUNDOS, Orcamento, RelatorioPesquisa, pesquisar
-from ..pesquisa.registro import RegistroPesquisa, montar_registro
+from ..pesquisa.registro import RegistroPesquisa, montar_registro, registro_em_json
 from ..planilhas.gera_planilha import MAX_ACHADOS_NA_PLANILHA, gerar_planilha
 
 # Nomes FIXOS dentro do .zip. Nunca derivados de texto da web ou do usuário: um nome como "../../.bashrc" poderia,
@@ -48,6 +49,7 @@ def executar_pesquisa(
     modelo: str = MODELO_AGENTE_PESQUISA,
     esforco: str | None = None,
     timeout: float = TIMEOUT_CHAMADA_SEGUNDOS,
+    ao_evento: Callable[[EventoDeProgresso], None] | None = None,
 ) -> ExecucaoPesquisa:
     """Roda a pesquisa, mede a duração e o uso, e monta o registro.
 
@@ -58,7 +60,8 @@ def executar_pesquisa(
     inicio = _agora()
     with contador_de_uso.usando(coletor):
         relatorio = pesquisar(
-            pedido, orcamento=orcamento, cancelar=cancelar, modelo=modelo, esforco=esforco, timeout=timeout
+            pedido, orcamento=orcamento, cancelar=cancelar, modelo=modelo, esforco=esforco, timeout=timeout,
+            ao_evento=ao_evento,  # acompanhamento opcional: o terminal e a tela passam o seu
         )
     fim = _agora()
     registro = montar_registro(pedido, relatorio, inicio, fim, modelo, esforco, uso=coletor.resumo())
@@ -86,6 +89,7 @@ def montar_pacote(registro: RegistroPesquisa, achados_escolhidos: list[AchadoCom
 
     Raises:
         ErroDeEscolha: a escolha não passa em `validar_escolha`.
+        ErroDeRegistro: o registro passou do limite de tamanho.
     """
     validar_escolha(registro, achados_escolhidos)
     resultado = registro.resultado
@@ -100,6 +104,6 @@ def montar_pacote(registro: RegistroPesquisa, achados_escolhidos: list[AchadoCom
     memoria = BytesIO()
     with zipfile.ZipFile(memoria, "w", compression=zipfile.ZIP_DEFLATED) as pacote:
         pacote.writestr(ARQUIVO_PLANILHA, planilha)
-        pacote.writestr(ARQUIVO_REGISTRO, registro.model_dump_json(indent=2))
+        pacote.writestr(ARQUIVO_REGISTRO, registro_em_json(registro))  # mesmo limite de tamanho do arquivo salvo
         pacote.writestr(ARQUIVO_PEDIDO, registro.pedido.model_dump_json(indent=2))
     return memoria.getvalue()
