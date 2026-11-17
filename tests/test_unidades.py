@@ -164,6 +164,23 @@ class TestQuantidadesDoTexto(unittest.TestCase):
     def test_traco_de_intervalo_nao_vira_sinal(self):
         self.assertEqual(quantidades_do_texto("faixa 4.5-28 V"), [(28.0, "V")])
 
+    def test_hifen_entre_numero_e_unidade(self):
+        casos = {
+            "1-A": [(1.0, "A")],
+            "3.3-V": [(3.3, "V")],
+            "10-mA": [(0.01, "A")],
+            "TLV1117LV 1-A, Positive Fixed-Voltage": [(1.0, "A")],
+        }
+        for texto, esperado in casos.items():
+            with self.subTest(texto=texto):
+                self.assertEqual(quantidades_do_texto(texto), esperado)
+
+    def test_hifen_de_intervalo_e_de_codigo_nao_sao_afetados(self):
+        self.assertEqual(quantidades_do_texto("faixa 4.5-28 V"), [(28.0, "V")])  # o mesmo de antes
+        self.assertEqual(quantidades_do_texto("de 4.5 V-28 V"), [(4.5, "V"), (28.0, "V")])
+        self.assertEqual(quantidades_do_texto("LM1117-3.3 e AMS1117-ADJ"), [])  # código de peça, sem unidade
+        self.assertEqual(quantidades_do_texto("1-Amp, 3-Volts"), [])  # a unidade não pode continuar em letra
+
     def test_nao_engole_numeros_que_nao_sao_quantidades(self):
         casos = [
             "TPS54331 e AC1234V",  # código de peça: dígitos colados a letras

@@ -148,7 +148,9 @@ _QUANTIDADE_NO_TEXTO = re.compile(
     #   Fica ANTES do sinal: em "4.5-28 V" o "-" vem depois de "5", então não é sinal; o "28" é lido sozinho.
     r"(?<![\w.,])"
     r"(?P<numero>[+-]?[0-9]+(?:[.,][0-9]+)?)"  # [0-9] e não \d: só algarismos 0-9
-    r"\s?"  # no máximo um espaço entre número e unidade ("3.3V" ou "3.3 V")
+    # Entre número e unidade: nada, um espaço ou UM hífen ("3.3V", "3.3 V", "1-A", "3.3-V", comuns em datasheets).
+    # O hífen de intervalo não é afetado: em "4.5-28 V", depois do hífen vem dígito, não unidade, então "4.5" não casa.
+    r"(?:\s|-)?"
     rf"(?P<unidade>[{''.join(PREFIXOS)}]?(?:{_UNIDADES_NA_REGEX}))"
     # (?!\w) "lookahead negativo": a unidade não pode continuar em letra ("5 Volts" não é "5 V"; "10 Amps" não é "10 A").
     r"(?!\w)"

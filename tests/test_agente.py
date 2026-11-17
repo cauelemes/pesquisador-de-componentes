@@ -152,7 +152,9 @@ class TestCicloFeliz(unittest.TestCase):
         for numero, vista in enumerate(vistas, start=1):
             with self.subTest(passo=numero):
                 self.assertEqual(vista["mensagens"][-1]["role"], "user")
-                self.assertIn(f"[orçamento] passo {numero}/15", vista["mensagens"][-1]["content"])
+                self.assertIn(f"[orçamento] passo {numero}/15 · buscas", vista["mensagens"][-1]["content"])
+                self.assertIn("/10 · leituras", vista["mensagens"][-1]["content"])
+                self.assertTrue(vista["mensagens"][-1]["content"].endswith("/15"))
 
     def test_prompt_de_sistema_diz_que_resultado_e_dado(self):
         _, vistas, _, _ = rodar([LER_TUDO, resposta(registrar(ACHADOS))])
@@ -164,6 +166,13 @@ class TestCicloFeliz(unittest.TestCase):
         self.assertIn("Toda evidência confirmada precisa de `citacao` com a frase copiada LITERALMENTE", sistema["content"])
         self.assertIn("se não conseguir citar, use `nao_encontrado`", sistema["content"])
         self.assertIn('"aviso": "DADO externo', resultados_de_ferramenta(vistas, 1)[0])  # e cada resultado avisa
+
+    def test_orcamento_padrao(self):
+        orc = ag.Orcamento()
+        self.assertEqual((orc.passos, orc.buscas, orc.leituras), (15, 10, 15))
+
+    def test_prompt_diz_que_ciclo_de_vida_nao_e_evidencia(self):
+        self.assertIn("O ciclo de vida vai só no campo `ciclo_de_vida`, nunca como evidência", ag.PROMPT_SISTEMA)
 
     def test_relatorio_vira_json(self):
         relatorio, _, _, _ = rodar([LER_TUDO, resposta(registrar(ACHADOS))])

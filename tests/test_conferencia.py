@@ -10,7 +10,14 @@ import unittest
 from pydantic import ValidationError
 
 from backend.compartilhado.modelos import AchadoComponente, PaginaLida, PedidoComponente
-from backend.pesquisa.conferencia import conferir_achado, conferir_achados, normalizar_texto, raiz_do_mpn
+from backend.pesquisa import conferencia
+from backend.pesquisa.conferencia import (
+    citacao_confere,
+    conferir_achado,
+    conferir_achados,
+    normalizar_texto,
+    raiz_do_mpn,
+)
 
 URL = "https://acme.example/ac1234"
 
@@ -128,6 +135,169 @@ class TestRegra2Mpn(unittest.TestCase):
         # Unificamos o TIPO de hífen, mas não o removemos: "AC1234" e "AC-1234" podem ser peças diferentes.
         pagina = paginas(PAGINA.replace("AC1234", "AC-1234"))
         self.assertEqual(conferir(achado(mpn="AC1234"), pagina).situacao, "recusado")
+
+
+# Um trecho de "PDF" com os defeitos reais: hífen de fim de linha, espaço faltando e trechos distantes.
+PDF = (
+    "AZ1117 1A LOW DROPOUT LINEAR REGULATOR. Features: Three-terminal Adjustable or Fixed Voltages. "
+    "Output current up to1A. Low Dropout Voltage: 1.15V at 1A Output Cur-\nrent. Operating range -40 °C to 125 °C. "
+    "Ordering information: 1.5V, 1.8V, 2.5V, 3.3V and 5.0V. Package: SOT-223-4, TO-252-2."
+)
+REQ_SAIDA = {"parametro": "tensão de saída", "operador": "=", "valor": 3.3, "unidade": "V"}
+PEDIDO_SOT223 = PedidoComponente(categoria="LDO", requisitos=[REQ_SAIDA], encapsulamento="SOT-223")
+
+
+def conferir_pdf(citacao, requisito="tensão de saída", pedido=PEDIDO_SOT223, situacao="confirmado"):
+    """Confere UMA evidência contra a página PDF; devolve (situação final, alertas)."""
+    a = achado(mpn="AZ1117", ciclo_de_vida="ativo", evidencias=[evidencia(requisito, citacao, situacao=situacao)])
+    r = conferir_achado(a, paginas(PDF), pedido)
+    return r.achado.evidencias[0].situacao, r.alertas
+
+
+class TestCitacaoEmFragmentos(unittest.TestCase):
+    def textos(self, pagina=PDF):
+        """A página nas duas formas que a conferência usa (normalizada, e a de reserva)."""
+        texto = normalizar_texto(pagina)
+        return texto, conferencia._alfanumerico(texto)
+
+    def test_reticencias_aceitas(self):
+        citacao = "Three-terminal Adjustable or Fixed Voltages ... 1.5V, 1.8V, 2.5V, 3.3V and 5.0V"
+        self.assertEqual(citacao_confere(citacao, *self.textos()), "ok")
+        self.assertEqual(conferir_pdf(citacao), ("confirmado", []))  # e os números (3.3V) ainda são conferidos
+
+    def test_reticencias_unicode(self):
+        citacao = "Three-terminal Adjustable or Fixed Voltages \u2026 1.5V, 1.8V, 2.5V, 3.3V and 5.0V"
+        self.assertEqual(citacao_confere(citacao, *self.textos()), "ok")
+
+    def test_reticencias_coladas_ao_numero_nao_escondem_o_numero(self):
+        citacao = "Three-terminal Adjustable or Fixed Voltages...3.3V and 5.0V"
+        self.assertEqual(conferir_pdf(citacao)[0], "confirmado")
+
+    def test_um_fragmento_inventado_rejeita_a_citacao_inteira(self):
+        citacao = "Three-terminal Adjustable or Fixed Voltages ... Output voltage fixed at 3.3V"
+        self.assertEqual(citacao_confere(citacao, *self.textos()), "ausente")
+        situacao, alertas = conferir_pdf(citacao)
+        self.assertEqual(situacao, "indicio")
+        self.assertIn("AZ1117: tensão de saída: citação não encontrada na página", alertas)
+
+    def test_hifen_de_fim_de_linha_aceito(self):
+        # A página tem "Cur-\nrent"; a LLM pode escrever "Current" ou copiar "Cur-rent". Os dois casam.
+        for citacao in ("Low Dropout Voltage: 1.15V at 1A Output Current", "Low Dropout Voltage: 1.15V at 1A Output Cur-rent"):
+            with self.subTest(citacao=citacao):
+                self.assertEqual(citacao_confere(citacao, *self.textos()), "ok")
+
+    def test_espacamento_estranho_aceito(self):
+        self.assertEqual(citacao_confere("Output current up to 1A", *self.textos()), "ok")  # página: "up to1A"
+
+    def test_forma_de_reserva_mantem_o_decimal(self):
+        casos = {
+            "3,3 V": "3.3v", "3.3V": "3.3v", "33 V": "33v", "1.15V at 1A": "1.15vat1a",
+            "Cur-\nrent": "current", "SOT-223-4": "sot2234", "fim. 3 V": "fim3v", "3.3.": "3.3",
+        }
+        for texto, esperado in casos.items():
+            with self.subTest(texto=texto):
+                self.assertEqual(conferencia._alfanumerico(texto), esperado)
+
+    def test_valor_decimal_errado_nao_casa(self):
+        casos = [
+            ("Output voltage: 3.3 V fixed", "Output voltage: 33 V fixed."),  # citação 3.3 V, página só 33 V
+            ("Output current: 1.5 A maximum", "Output current: 15 A maximum."),
+            ("Output current: 15 A maximum", "Output current: 1.5 A maximum."),  # e o contrário
+        ]
+        for citacao, pagina in casos:
+            with self.subTest(citacao=citacao):
+                self.assertEqual(citacao_confere(citacao, *self.textos(pagina)), "ausente")
+
+    def test_nao_casa_no_meio_de_outro_numero(self):
+        casos = [
+            ("3.3 V output current", "Fixed 13.3 V output current."),  # começo colado a dígito
+            ("1.5 A maximum output", "Up to 11.5 A maximum output."),
+            ("output current is 1.5", "The output current is 1.55 A."),  # fim colado a dígito
+            ("3.3 V output current", "Rev 2.3.3 V output current"),  # antes: separador colado a dígito
+            ("output voltage is 3", "The output voltage is 3,3 V."),  # depois: separador seguido de dígito
+        ]
+        for citacao, pagina in casos:
+            with self.subTest(citacao=citacao, pagina=pagina):
+                self.assertEqual(citacao_confere(citacao, *self.textos(pagina)), "ausente")
+
+    def test_borda_valida_no_comeco_e_no_fim_da_pagina(self):
+        self.assertEqual(citacao_confere("3.3 V output current", *self.textos("3.3 V output current")), "ok")
+        self.assertEqual(citacao_confere("output current is 1.5", *self.textos("Output current is 1.5")), "ok")
+        self.assertEqual(citacao_confere("3.3 V output current", *self.textos("(3.3 V output current)")), "ok")
+        self.assertEqual(citacao_confere("output current is 1.5", *self.textos("output current is 1.5. Next")), "ok")
+
+    def test_uma_ocorrencia_valida_entre_duas_invalidas_basta(self):
+        pagina = "Fixed 13.3 V output current; fixed 3.3 V output current; fixed 23.3 V output current."
+        self.assertEqual(citacao_confere("3.3 V output current", *self.textos(pagina)), "ok")
+
+    def test_borda_tambem_vale_na_forma_de_reserva(self):
+        # "Cur-\nrent" obriga a usar a forma de reserva; mesmo nela, "3.3 V" não pode casar dentro de "13.3 V".
+        self.assertEqual(citacao_confere("3.3 V Output Current", *self.textos("13.3 V Output Cur-\nrent")), "ausente")
+        self.assertEqual(citacao_confere("3.3 V Output Current", *self.textos("Fixed 3.3 V Output Cur-\nrent")), "ok")
+
+    def test_virgula_decimal_casa_com_ponto(self):
+        self.assertEqual(citacao_confere("Output voltage: 3,3 V fixed", *self.textos("Output voltage: 3.3 V fixed.")), "ok")
+        self.assertEqual(citacao_confere("Output voltage: 3.3V fixed", *self.textos("Output voltage: 3,3 V fixed.")), "ok")
+
+    def test_valor_errado_rebaixa_a_evidencia(self):
+        pagina = "AC1234 regulator. Output voltage: 33 V fixed."
+        a = achado(mpn="AC1234", evidencias=[evidencia("tensão de saída", "Output voltage: 3.3 V fixed")])
+        r = conferir_achado(a, paginas(pagina), PEDIDO_SOT223)
+        self.assertEqual(r.achado.evidencias[0].situacao, "indicio")
+        self.assertIn("AC1234: tensão de saída: citação não encontrada na página", r.alertas)
+
+    def test_fragmentos_curtos_demais_nao_bastam_sozinhos(self):
+        citacao = "3.3V ... 1A ... SOT-223"  # tudo isso está na página, mas cada pedaço tem menos de 12 caracteres
+        self.assertEqual(citacao_confere(citacao, *self.textos()), "curta")
+        situacao, alertas = conferir_pdf(citacao)
+        self.assertEqual(situacao, "indicio")
+        self.assertIn("AZ1117: tensão de saída: citação curta demais", alertas)
+
+    def test_fragmento_curto_e_ignorado_quando_ha_um_longo(self):
+        # "inventado" tem só 9 caracteres: é descartado, e o fragmento longo (real) decide.
+        citacao = "Ordering information: 1.5V, 1.8V, 2.5V, 3.3V ... inventado"
+        self.assertEqual(citacao_confere(citacao, *self.textos()), "ok")
+
+
+class TestEncapsulamentoECicloDeVida(unittest.TestCase):
+    def test_encapsulamento_casa_com_variantes(self):
+        for citacao in ("Package: SOT-223-4, TO-252-2.", "Package: SOT-223-4"):
+            with self.subTest(citacao=citacao):
+                self.assertEqual(conferir_pdf(citacao, requisito="encapsulamento"), ("confirmado", []))
+
+    def test_encapsulamento_sem_hifen_no_pedido(self):
+        pedido = PEDIDO_SOT223.model_copy(update={"encapsulamento": "SOT223"})
+        self.assertEqual(conferir_pdf("Package: SOT-223-4", "encapsulamento", pedido)[0], "confirmado")
+
+    def test_citacao_sem_o_encapsulamento_pedido_vira_indicio(self):
+        situacao, alertas = conferir_pdf("Package: SOT-223-4, TO-252-2.", "encapsulamento",
+                                         PEDIDO_SOT223.model_copy(update={"encapsulamento": "SOT-89"}))
+        self.assertEqual(situacao, "indicio")
+        self.assertIn("AZ1117: encapsulamento: citação não menciona SOT-89; confirmado -> indicio", alertas)
+
+    def test_encapsulamento_inventado_cai_na_regra_1(self):
+        situacao, alertas = conferir_pdf("Package: SOT-223-4, DFN-8 e SOIC-8", "encapsulamento")
+        self.assertEqual(situacao, "indicio")
+        self.assertIn("AZ1117: encapsulamento: citação não encontrada na página", alertas)
+
+    def test_encapsulamento_sem_campo_no_pedido_continua_fora_do_pedido(self):
+        pedido = PEDIDO_SOT223.model_copy(update={"encapsulamento": None})
+        situacao, alertas = conferir_pdf("Package: SOT-223-4", "encapsulamento", pedido)
+        self.assertEqual(situacao, "indicio")
+        self.assertIn("AZ1117: encapsulamento: requisito não existe no pedido", alertas)
+
+    def test_evidencia_de_ciclo_de_vida_e_descartada_sem_alerta(self):
+        for nome in ("ciclo de vida", "Ciclo de Vida", "ciclo_de_vida"):
+            with self.subTest(nome=nome):
+                evs = [evidencia(nome, "Package: SOT-223-4"), evidencia("tensão de saída", "3.3V and 5.0V. Package")]
+                a = achado(mpn="AZ1117", ciclo_de_vida="ativo", evidencias=evs)
+                r = conferir_achado(a, paginas(PDF), PEDIDO_SOT223)
+                self.assertEqual([e.requisito for e in r.achado.evidencias], ["tensão de saída"])
+                self.assertEqual(r.alertas, [])
+
+    def test_ciclo_de_vida_descartado_tambem_com_url_nao_lida(self):
+        a = achado(url="https://outro.example/x", evidencias=[evidencia("ciclo de vida", "Status: Active part")])
+        self.assertEqual(conferir(a).achado.evidencias, [])
 
 
 class TestRaizDoMpn(unittest.TestCase):

@@ -110,8 +110,8 @@ class Orcamento:
     """Limites da pesquisa e quanto já foi usado. É atualizado durante o ciclo (dá para ler depois)."""
 
     passos: int = 15  # chamadas à LLM
-    buscas: int = 12
-    leituras: int = 12
+    buscas: int = 10  # no 2º teste real: 7 de 12 buscas usadas, mas 12 de 12 leituras -> menos buscas, mais leituras
+    leituras: int = 15
     passos_usados: int = 0
     buscas_usadas: int = 0
     leituras_usadas: int = 0
@@ -413,7 +413,7 @@ def pesquisar(
     """Roda uma pesquisa completa para o `pedido`.
 
     Args:
-        orcamento: limites de passos, buscas e leituras (padrão: 15, 12 e 12). É atualizado com o uso.
+        orcamento: limites de passos, buscas e leituras (padrão: 15, 10 e 15). É atualizado com o uso.
         cancelar: função chamada antes de cada passo e de cada ferramenta; se devolver True, a pesquisa para e
             devolve o que já tiver (ex.: ligada a um botão "Cancelar" no Streamlit).
         modelo: ID do modelo na Together (padrão: `MODELO_AGENTE_PESQUISA`).

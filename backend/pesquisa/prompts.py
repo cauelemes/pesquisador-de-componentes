@@ -27,7 +27,8 @@ _P_ENTREGA = """Como registrar (registrar_resultado):
 definitivo=true na entrega final e definitivo=false para salvar um resultado parcial.
 - Para cada achado: fabricante; mpn escrito exatamente como na página; url da página LIDA que contém as provas (todas \
 as citações do achado devem estar nessa página); ciclo_de_vida ("ativo" só se a página indicar que o produto está \
-ativo ou em produção; senão "desconhecido", "nrnd" ou "obsoleto").
+ativo ou em produção; senão "desconhecido", "nrnd" ou "obsoleto"). O ciclo de vida vai só no campo \
+`ciclo_de_vida`, nunca como evidência.
 - Uma evidência por requisito: "requisito" igual ao "parametro" do pedido; "citacao" é OBRIGATÓRIA (exceto em \
 nao_encontrado): um trecho LITERAL copiado da página (até 400 caracteres) que contém o número e a unidade; \
 "situacao" é confirmado, indicio, nao_encontrado ou contradiz.
