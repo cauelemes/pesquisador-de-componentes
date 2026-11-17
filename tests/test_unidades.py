@@ -6,7 +6,13 @@
 import unittest
 
 from backend.compartilhado.modelos import Requisito
-from backend.compartilhado.unidades import ErroDeUnidade, atende, parse_quantidade
+from backend.compartilhado.unidades import (
+    ErroDeUnidade,
+    atende,
+    parse_quantidade,
+    quantidades_do_texto,
+    unidade_base,
+)
 
 
 def req(operador: str, valor: float, unidade: str, valor_max: float | None = None) -> Requisito:
@@ -130,6 +136,49 @@ class TestAtende(unittest.TestCase):
         for valor in (float("nan"), float("inf")):
             with self.subTest(valor=valor), self.assertRaises(ErroDeUnidade):
                 atende(req(">=", 30, "V"), valor, "V")
+
+
+class TestUnidadeBase(unittest.TestCase):
+    def test_com_e_sem_prefixo(self):
+        for unidade, base in (("V", "V"), ("mA", "A"), ("kohm", "Ω"), ("MHz", "Hz"), ("°C", "°C")):
+            with self.subTest(unidade=unidade):
+                self.assertEqual(unidade_base(unidade), base)
+
+    def test_desconhecida(self):
+        for unidade in ("pinos", "", "m°C"):
+            with self.subTest(unidade=unidade), self.assertRaises(ErroDeUnidade):
+                unidade_base(unidade)
+
+
+class TestQuantidadesDoTexto(unittest.TestCase):
+    def test_frase_de_datasheet_em_ingles(self):
+        texto = "VIN from 4.5 V to 28 V, IOUT up to 3 A at 570 kHz"
+        self.assertEqual(quantidades_do_texto(texto), [(4.5, "V"), (28.0, "V"), (3.0, "A"), (570000.0, "Hz")])
+
+    def test_virgula_decimal_e_sem_espaco(self):
+        self.assertEqual(quantidades_do_texto("saída de 3,3V e 100 mA"), [(3.3, "V"), (0.1, "A")])
+
+    def test_temperatura_negativa(self):
+        self.assertEqual(quantidades_do_texto("de -40 °C a +125 ºC"), [(-40.0, "°C"), (125.0, "°C")])
+
+    def test_traco_de_intervalo_nao_vira_sinal(self):
+        self.assertEqual(quantidades_do_texto("faixa 4.5-28 V"), [(28.0, "V")])
+
+    def test_nao_engole_numeros_que_nao_sao_quantidades(self):
+        casos = [
+            "TPS54331 e AC1234V",  # código de peça: dígitos colados a letras
+            "100 pcs, lote 2024",  # número sem unidade
+            "5 Volts, 10 Amps, 3 Hzz",  # unidade continua em letra: não é a unidade
+            "3.3.3 V",  # número malformado
+            "5 m°C",  # °C não aceita prefixo
+            "",
+        ]
+        for texto in casos:
+            with self.subTest(texto=texto):
+                self.assertEqual(quantidades_do_texto(texto), [])
+
+    def test_resistencia_e_simbolos_unicode(self):
+        self.assertEqual(quantidades_do_texto("R1 = 10 kΩ, C1 = 4.7 μF"), [(10000.0, "Ω"), (4.7e-6, "F")])
 
 
 if __name__ == "__main__":

@@ -86,7 +86,7 @@ def _como_decimal(valor: float) -> Decimal:
     return Decimal(repr(float(valor)))
 
 
-def parse_quantidade(texto: str) -> tuple[float, str]:
+def parse_quantidade(texto: object) -> tuple[float, str]:
     """Lê "3,3 V" -> (3.3, "V"); "100 mA" -> (0.1, "A"); "2,2 kΩ" -> (2200.0, "Ω").
 
     Aceita vírgula ou ponto decimal, espaço opcional entre número e unidade, e os prefixos de `PREFIXOS`.
@@ -130,3 +130,46 @@ def atende(requisito: Requisito, valor: float, unidade: str) -> bool:
     # "faixa": os dois limites entram (intervalo fechado). O modelo `Requisito` garante que valor_max existe.
     maximo, _ = _para_base(_como_decimal(requisito.valor_max), requisito.unidade)
     return exigido <= medido <= maximo
+
+
+def unidade_base(unidade: str) -> str:
+    """A unidade-base de uma unidade com ou sem prefixo: "mA" -> "A", "kohm" -> "Ω". Levanta ErroDeUnidade."""
+    return _separar_unidade(unidade)[1]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Quantidades DENTRO de um texto (ex.: a frase citada de um datasheet)
+# ---------------------------------------------------------------------------------------------------------------------
+# Unidades da mais longa para a mais curta: assim "ohms" é tentado antes de "ohm", e "Hz" antes de "H".
+_UNIDADES_NA_REGEX = "|".join(re.escape(u) for u in sorted(UNIDADES, key=len, reverse=True))
+_QUANTIDADE_NO_TEXTO = re.compile(
+    # (?<![\w.,]) "lookbehind negativo": o número NÃO pode vir colado a letra, dígito, ponto ou vírgula.
+    #   Isso impede pegar "54331" de dentro de "TPS54331" ou o "3" final de "3.3.3".
+    #   Fica ANTES do sinal: em "4.5-28 V" o "-" vem depois de "5", então não é sinal; o "28" é lido sozinho.
+    r"(?<![\w.,])"
+    r"(?P<numero>[+-]?[0-9]+(?:[.,][0-9]+)?)"  # [0-9] e não \d: só algarismos 0-9
+    r"\s?"  # no máximo um espaço entre número e unidade ("3.3V" ou "3.3 V")
+    rf"(?P<unidade>[{''.join(PREFIXOS)}]?(?:{_UNIDADES_NA_REGEX}))"
+    # (?!\w) "lookahead negativo": a unidade não pode continuar em letra ("5 Volts" não é "5 V"; "10 Amps" não é "10 A").
+    r"(?!\w)"
+)
+
+
+def quantidades_do_texto(texto: str) -> list[tuple[float, str]]:
+    """Todas as quantidades (número + unidade) de um texto, já na unidade-base.
+
+    "VIN from 4.5 V to 28 V, IOUT 3 A" -> [(4.5, "V"), (28.0, "V"), (3.0, "A")]
+
+    Aceita ponto decimal (comum em datasheets em inglês) e vírgula decimal. Números sem unidade, números dentro de
+    palavras (códigos de peça) e unidades desconhecidas são ignorados: melhor deixar passar uma quantidade do que
+    inventar uma.
+    """
+    encontradas = []
+    for casamento in _QUANTIDADE_NO_TEXTO.finditer(_limpar_texto(texto)):
+        numero = Decimal(casamento["numero"].replace(",", "."))
+        try:
+            valor, base = _para_base(numero, casamento["unidade"])
+        except ErroDeUnidade:  # ex.: "m°C" casa a regex, mas °C não aceita prefixo
+            continue
+        encontradas.append((float(valor), base))
+    return encontradas

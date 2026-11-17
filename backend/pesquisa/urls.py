@@ -1,6 +1,6 @@
 """Utilidades para URLs usadas na pesquisa (padronizar e achar o "site" de um endereço).
 
-Vieram do antigo agrupador de resultados e servem ao agente: comparar a URL que ele citou com
+Servem ao agente: comparar a URL que ele citou com
 as que as ferramentas devolveram, e saber se duas URLs são do mesmo site.
 """
 
