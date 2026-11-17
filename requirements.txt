@@ -1,0 +1,7 @@
+streamlit
+httpx
+pydantic
+openpyxl
+together
+tavily-python
+python-dotenv
