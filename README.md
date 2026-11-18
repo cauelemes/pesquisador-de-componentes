@@ -82,8 +82,8 @@ as etapas diz que é uma demonstração, e a planilha gerada leva o mesmo aviso.
    foram testadas) e `git`.
 2. **Clone o repositório**:
    ```bash
-   git clone https://github.com/<usuario>/<repositorio>.git
-   cd <repositorio>
+   git clone https://github.com/cauelemes/pesquisador-de-componentes.git
+   cd pesquisador-de-componentes
    ```
 3. **Crie e ative um ambiente virtual**:
    ```bash
