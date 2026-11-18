@@ -27,19 +27,53 @@ CAMPO_DA_COLUNA = {"parametro": "parâmetro", "operador": "operador", "valor": "
 # ---------------------------------------------------------------------------------------------------------------------
 # Tabela de requisitos
 # ---------------------------------------------------------------------------------------------------------------------
+def _como_texto(valor) -> str:
+    """Um número para a célula, sem perder precisão e com vírgula: 3.3 -> "3,3"; 1.0 -> "1"; vazio -> ""."""
+    if _vazio(valor):
+        return ""
+    if isinstance(valor, (int, float)):
+        texto = repr(float(valor))  # repr: a forma mais curta que volta ao mesmo número (nada de arredondar)
+        return texto.removesuffix(".0").replace(".", ",")
+    return str(valor)
+
+
 def _tabela(linhas: list[dict]) -> pd.DataFrame:
-    """As colunas numéricas viram `float64`: o vazio delas é NaN, que o editor mostra EM BRANCO. (Com `None` numa coluna
-    de tipo genérico, o editor mostrava o texto "None".)"""
-    return pd.DataFrame(linhas, columns=COLUNAS).astype({"valor": "float64", "valor máximo": "float64"})
+    """A tabela do editor, com TODAS as colunas como texto e "" no vazio.
+
+    Por que texto também em "valor" e "valor máximo": a versão instalada do Streamlit desenha um número NULO como a
+    palavra "None" (sem opção para mudar). Uma célula de texto vazia ("") aparece em branco. A conversão para número é
+    feita no código, ao validar (`_numero`), e aceita vírgula ou ponto decimal.
+    """
+    tabela = pd.DataFrame(linhas, columns=COLUNAS)
+    for coluna in ("valor", "valor máximo"):
+        tabela[coluna] = tabela[coluna].map(_como_texto)
+    return tabela.fillna("").astype(str)
 
 
 def _tabela_vazia() -> pd.DataFrame:
-    return _tabela([{"parâmetro": "", "operador": "≥", "valor": None, "valor máximo": None, "unidade": ""}])
+    return _tabela([{"parâmetro": "", "operador": "≥", "valor": "", "valor máximo": "", "unidade": ""}])
 
 
 def _vazio(valor) -> bool:
     """Célula vazia? O editor devolve None, "" ou NaN ("not a number", o "vazio" das colunas numéricas do pandas)."""
     return valor is None or (isinstance(valor, float) and math.isnan(valor)) or (isinstance(valor, str) and not valor.strip())
+
+
+def _numero(texto):
+    """O texto de uma célula numérica para o modelo: "3,3" e "3.3" -> 3.3; vazio -> None (ausente).
+
+    Texto que não é número ("abc", "1.000,5") volta COMO ESTÁ: o Pydantic o recusa, e a mensagem traduzida em
+    `_traduzir` ("precisa ser um número (ex.: 3,3 ou 3.3)") aparece embaixo da tabela.
+    """
+    if _vazio(texto):
+        return None
+    if isinstance(texto, (int, float)):  # defensivo: uma tabela antiga, ainda numérica, no estado da sessão
+        return float(texto)
+    limpo = str(texto).strip()
+    try:
+        return float(limpo.replace(",", "."))  # vírgula decimal (padrão brasileiro) ou ponto
+    except ValueError:
+        return limpo
 
 
 def _requisitos_da_tabela(tabela: pd.DataFrame) -> list[dict]:
@@ -51,6 +85,8 @@ def _requisitos_da_tabela(tabela: pd.DataFrame) -> list[dict]:
         valores = {campo: (None if _vazio(linha.get(coluna)) else linha.get(coluna))
                    for campo, coluna in CAMPO_DA_COLUNA.items()}
         valores["operador"] = OPERADORES.get(valores["operador"], valores["operador"])
+        for campo in ("valor", "valor_max"):  # as células numéricas são texto: aqui viram número
+            valores[campo] = _numero(valores[campo])
         for campo in ("parametro", "unidade"):  # texto vazio vira "" (o modelo diz "não pode ficar vazio")
             valores[campo] = valores[campo] or ""
         requisitos.append(valores)
@@ -72,7 +108,9 @@ def _traduzir(erro: dict) -> str:
     if tipo == "too_long":
         return f"no máximo {ctx.get('max_length')} requisitos"
     if tipo in ("float_parsing", "float_type", "missing"):
-        return "precisa ser um número" if erro["loc"][-1] in ("valor", "valor_max") else "campo obrigatório"
+        if erro["loc"][-1] in ("valor", "valor_max"):
+            return "precisa ser um número (ex.: 3,3 ou 3.3)"
+        return "campo obrigatório"
     if tipo == "finite_number":
         return "precisa ser um número finito"
     if tipo == "literal_error":
@@ -222,9 +260,10 @@ def render() -> None:
             "parâmetro": st.column_config.TextColumn("parâmetro", max_chars=80),
             "operador": st.column_config.SelectboxColumn("operador", options=list(OPERADORES), required=True),
             # "localized": o número aparece no formato do navegador (no Brasil, com vírgula decimal).
-            "valor": st.column_config.NumberColumn("valor", format="localized"),
-            "valor máximo": st.column_config.NumberColumn("valor máximo", format="localized",
-                                                          help="só para o operador 'faixa'"),
+            # Texto, e não NumberColumn: assim a célula vazia aparece em branco (ver `_tabela`).
+            "valor": st.column_config.TextColumn("valor", max_chars=20, help="um número: 3,3 ou 3.3"),
+            "valor máximo": st.column_config.TextColumn("valor máximo", max_chars=20,
+                                                        help="só para o operador 'faixa' (ex.: 5 ou 5,5)"),
             "unidade": st.column_config.TextColumn("unidade", max_chars=16, help="ex.: V, mA, kΩ, MHz, °C"),
         },
     )

@@ -115,17 +115,66 @@ class TestPedido(BaseApp):
         at = self.clicar(self.abrir(), "botao_exemplo")
         (editor,) = at.get("dataframe")  # o `st.data_editor` aparece no AppTest como um elemento "dataframe"
         tabela = pa.ipc.open_stream(editor.proto.arrow_data.data).read_all()  # os dados que vão ao navegador (Arrow)
-        self.assertTrue(pa.types.is_floating(tabela.schema.field("valor máximo").type))  # número, não texto
-        self.assertEqual(tabela.column("valor máximo").to_pylist(), [None, None])  # nulo = célula em branco
+        # O Streamlit instalado desenha um NULO como a palavra "None"; um texto vazio ("") aparece em branco.
+        self.assertEqual(tabela.column("valor máximo").to_pylist(), ["", ""])  # texto vazio, não nulo
+        self.assertEqual(tabela.column("valor").to_pylist(), ["3,3", "1"])  # com vírgula decimal
         celulas = [v for linha in tabela.to_pylist() for v in linha.values()]
-        self.assertNotIn("None", celulas)  # nenhuma célula com o TEXTO "None" (o defeito antigo)
+        self.assertNotIn(None, celulas)  # nenhum nulo (que viraria "None" na tela)...
+        self.assertNotIn("None", celulas)  # ...nem o texto "None"
         self.assertEqual(tabela.column("operador").to_pylist(), ["=", "≥"])
+
+    def test_valor_que_nao_e_numero_mostra_erro_claro(self):
+        from frontend.secoes import pedido as secao
+
+        tabela = secao._tabela([{"parâmetro": "tensão", "operador": "≥", "valor": "abc", "valor máximo": "",
+                                 "unidade": "V"}])
+        at = self.abrir(**{estado.REQUISITOS_BASE: tabela, estado.PEDIDO_TOCADO: True,
+                           estado.CAMPO_CATEGORIA: "LDO", estado.COPIA_CATEGORIA: "LDO"})
+        self.assertTrue(at.button(key="botao_pesquisar").disabled)
+        self.assertIn("Requisito 1, valor: precisa ser um número (ex.: 3,3 ou 3.3)", [e.value for e in at.error])
 
     def test_apagar_a_categoria_volta_a_desabilitar(self):
         at = self.clicar(self.abrir(), "botao_exemplo")
         at.text_input(key=estado.CAMPO_CATEGORIA).set_value("   ").run()
         self.assertTrue(at.button(key="botao_pesquisar").disabled)
         self.assertIn("Categoria: não pode ficar vazio", [e.value for e in at.error])
+
+
+class TestNumerosDaTabela(unittest.TestCase):
+    """A conversão das células de texto ("3,3") para número, ao validar o pedido."""
+
+    def montar(self, valor, valor_max=""):
+        from frontend.secoes import pedido as secao
+
+        operador = "faixa" if valor_max else "≥"
+        tabela = secao._tabela([{"parâmetro": "tensão", "operador": operador, "valor": valor, "valor máximo": valor_max,
+                                 "unidade": "V"}])
+        return secao.montar_pedido("LDO", "", tabela)
+
+    def test_virgula_e_ponto_viram_o_mesmo_numero(self):
+        for texto in ("3,3", "3.3", " 3,3 "):
+            with self.subTest(texto=texto):
+                pedido, erros = self.montar(texto)
+                self.assertEqual(erros, {})
+                self.assertEqual(pedido.requisitos[0].valor, 3.3)
+
+    def test_faixa_com_valor_maximo(self):
+        pedido, _ = self.montar("4,5", "5.5")
+        self.assertEqual((pedido.requisitos[0].valor, pedido.requisitos[0].valor_max), (4.5, 5.5))
+
+    def test_texto_que_nao_e_numero_e_recusado_com_mensagem_clara(self):
+        for texto in ("abc", "1.000,5", "3,3 V"):
+            with self.subTest(texto=texto):
+                pedido, erros = self.montar(texto)
+                self.assertIsNone(pedido)
+                self.assertEqual(erros["requisitos"], ["Requisito 1, valor: precisa ser um número (ex.: 3,3 ou 3.3)"])
+
+    def test_vazio_e_ausente(self):
+        pedido, erros = self.montar("")
+        self.assertIsNone(pedido)
+        self.assertIn("Requisito 1, valor: precisa ser um número (ex.: 3,3 ou 3.3)", erros["requisitos"])
+        pedido, _ = self.montar("3,3", "")  # valor máximo vazio = ausente (o operador aqui não é faixa)
+        self.assertIsNone(pedido.requisitos[0].valor_max)
 
 
 class TestFluxoCompleto(BaseApp):

@@ -1,5 +1,0 @@
-Capturas de tela usadas no README.md: pedido.png (etapa 1) e revisao.png (etapa 3).
-
-Antes de publicar, confira que as imagens desta pasta estão atualizadas e não mostram nada pessoal
-(chaves, caminhos locais, e-mails). A demonstração ("Rodar demonstração (sem chaves)") gera as telas sem
-gastar créditos. Os testes não dependem destas imagens.

@@ -5,9 +5,9 @@ pelo código.
 
 ![testes](https://github.com/<usuario>/<repositorio>/actions/workflows/testes.yml/badge.svg)
 
-| Pedido | Revisão |
-|---|---|
-| ![Etapa 1: o pedido](docs/img/pedido.png) | ![Etapa 3: a revisão das provas](docs/img/revisao.png) |
+| Etapa 1: o pedido | Etapa 2: a atividade ao vivo | Etapa 3: a revisão das provas |
+|---|---|---|
+| ![Etapa 1: o pedido](docs/img/pedido.png) | ![Etapa 2: a atividade ao vivo](docs/img/pesquisa.png) | ![Etapa 3: a revisão das provas](docs/img/revisao.png) |
 
 ## Por que este projeto existe
 
@@ -90,7 +90,7 @@ as etapas diz que é uma demonstração, e a planilha gerada leva o mesmo aviso.
    python3.12 -m venv .venv
    source .venv/bin/activate          # no Windows: .venv\Scripts\activate
    ```
-4. **Instale as dependências**: `pip install -r requirements.txt`
+4. **Instale as dependências**: `pip install -r requirements.txt` (as versões são as testadas, fixadas com `==`)
 5. **Crie o seu `.env`** a partir do modelo: `cp .env.example .env`
 6. **Crie as duas chaves**:
    - **Together AI** (a LLM do agente): crie uma conta em together.ai e gere uma chave de API nas configurações da
@@ -180,8 +180,9 @@ As da conferência estão detalhadas em [docs/regras.md](docs/regras.md#limitaç
 6. O resultado varia entre execuções com o mesmo pedido.
 7. O limite de pesquisas por sessão é um freio, não uma cota.
 
-Além disso: as dependências do `requirements.txt` não têm versão fixa, e o estado da interface vive só na memória da
-sessão (fechar a aba perde a pesquisa; o pacote `.zip` é a forma de guardá-la).
+Além disso: o estado da interface vive só na memória da sessão (fechar a aba perde a pesquisa; o pacote `.zip` é a
+forma de guardá-la), e o projeto só foi testado com Python 3.12 e com as versões fixadas no `requirements.txt`
+(atualizá-las pede rodar a suíte de novo).
 
 ## Roadmap
 
@@ -224,7 +225,7 @@ frontend/
 exemplos/
   pedido_regulador.json   # um pedido de exemplo
   execucao_gravada.json   # a execução de referência, recortada (usada pela demonstração)
-docs/                   # arquitetura, regras de conferência e capturas de tela
+docs/                   # arquitetura, regras de conferência e capturas de tela (docs/img)
 tests/                  # testes unittest (sem rede, sem chaves)
 .streamlit/             # configuração do servidor e modelo do secrets.toml
 ```

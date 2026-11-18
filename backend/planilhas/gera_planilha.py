@@ -47,8 +47,13 @@ CORES_SITUACAO = {
     "contradiz": "FFC7CE",  # vermelho claro
     "nao_encontrado": "E7E6E6",  # cinza claro
 }
-# Como mostrar cada operador ao leitor ("=" sozinho numa célula pareceria o início de uma fórmula).
-ROTULOS_OPERADOR = {">=": "≥", "<=": "≤", "=": "igual a", "faixa": "faixa"}
+# Como mostrar cada operador. Numa célula SOZINHO, um "=" seria o início de uma fórmula (e a proteção o mostraria como
+# "'="); por isso a aba do pedido usa rótulos com texto, que nunca começam com um caractere de fórmula. No meio de um
+# texto (o cabeçalho "tensão de saída (= 3,3 V)"), o símbolo é seguro.
+ROTULOS_OPERADOR = {">=": "maior ou igual (≥)", "<=": "menor ou igual (≤)", "=": "igual (=)", "faixa": "faixa"}
+SIMBOLOS_OPERADOR = {">=": "≥", "<=": "≤", "=": "=", "faixa": "faixa"}
+# Situações em que o valor pedido FOI achado: só nelas a célula pode repeti-lo (ver `_celula_de_requisito`).
+_SITUACOES_QUE_ACHARAM = ("confirmado", "indicio")
 _CABECALHO_FONTE = Font(bold=True)
 _CABECALHO_FUNDO = PatternFill("solid", fgColor="D9E1F2")  # azul acinzentado
 _QUEBRA = Alignment(wrap_text=True, vertical="top")
@@ -112,12 +117,19 @@ def _evidencia_de(achado: AchadoComponente, nomes: set[str]) -> EvidenciaRequisi
     return next((e for e in achado.evidencias if normalizar_texto(e.requisito) in nomes), None)
 
 
-def _celula_de_requisito(evidencia: EvidenciaRequisito | None) -> str:
-    """O texto da célula de um requisito: "3,3 V (confirmado)", "(indício)" ou "sem evidência"."""
+def _celula_de_requisito(evidencia: EvidenciaRequisito | None, pedido_sem_numero: str | None = None) -> str:
+    """O texto da célula de um requisito: "3,3 V (confirmado)", "(indício)" ou "sem evidência".
+
+    `pedido_sem_numero`: o que foi pedido, para requisitos sem valor numérico (o encapsulamento, ex.: "SOT-223"). Ele
+    só é escrito quando a evidência diz que FOI achado (confirmado ou indício): "SOT-223 (confirmado)". Com
+    "não encontrado" ou "contradiz", escrever "SOT-223" faria parecer que o encapsulamento pedido apareceu.
+    """
     if evidencia is None:
         return "sem evidência"
     rotulo = f"({ROTULOS_SITUACAO[evidencia.situacao]})"
     if evidencia.valor is None:
+        if pedido_sem_numero and evidencia.situacao in _SITUACOES_QUE_ACHARAM:
+            return f"{pedido_sem_numero} {rotulo}"
         return rotulo
     unidade = f" {evidencia.unidade}" if evidencia.unidade else ""
     return f"{_numero_br(evidencia.valor)}{unidade} {rotulo}"
@@ -129,7 +141,7 @@ def _celula_de_requisito(evidencia: EvidenciaRequisito | None) -> str:
 def _aba_alternativas(aba: Worksheet, pedido: PedidoComponente, achados: list[AchadoComponente]) -> None:
     fixas = ["Nº", "Fabricante", "MPN", "Ciclo de vida", "URL da fonte"]
     requisitos = [
-        f"{r.parametro} ({r.operador} {_numero_br(r.valor)}"
+        f"{r.parametro} ({SIMBOLOS_OPERADOR[r.operador]} {_numero_br(r.valor)}"
         + (f" a {_numero_br(r.valor_max)}" if r.valor_max is not None else "")
         + f" {r.unidade})"
         for r in pedido.requisitos
@@ -141,7 +153,9 @@ def _aba_alternativas(aba: Worksheet, pedido: PedidoComponente, achados: list[Ac
         evidencias = [_evidencia_de(achado, {normalizar_texto(r.parametro)}) for r in pedido.requisitos]
         if pedido.encapsulamento:
             evidencias.append(_evidencia_de(achado, NOMES_ENCAPSULAMENTO))
-        celulas = [_celula_de_requisito(e) for e in evidencias]
+        celulas = [_celula_de_requisito(e) for e in evidencias[: len(pedido.requisitos)]]
+        if pedido.encapsulamento:  # a última coluna: o encapsulamento pedido, quando a evidência diz que foi achado
+            celulas.append(_celula_de_requisito(evidencias[-1], pedido_sem_numero=pedido.encapsulamento))
         _escrever_linha(aba, [numero, achado.fabricante, achado.mpn, achado.ciclo_de_vida, achado.url, *celulas])
         for deslocamento, evidencia in enumerate(evidencias):
             _pintar(aba.cell(row=aba.max_row, column=len(fixas) + 1 + deslocamento), evidencia and evidencia.situacao)

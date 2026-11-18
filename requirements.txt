@@ -1,6 +1,12 @@
-streamlit
-pydantic
-openpyxl
-together
-tavily-python
-python-dotenv
+# Versões TESTADAS deste projeto (as do ambiente de desenvolvimento e do CI). Fixar com "==" garante que quem clonar
+# tenha o mesmo comportamento e que o CI não quebre quando sair uma versão nova. Para atualizar: mude aqui, reinstale e
+# rode a suíte (python -m unittest discover -s tests -t .).
+streamlit==1.67.0
+pydantic==2.14.3
+openpyxl==3.1.5
+together==3.2.1
+tavily-python==0.8.5
+python-dotenv==1.2.4
+# Usados diretamente pelo código (já vêm com o streamlit, mas fixamos a versão testada):
+pandas==3.1.1    # a tabela de requisitos da interface (frontend/secoes/pedido.py)
+pyarrow==26.0.1  # os testes leem os dados que a interface envia ao navegador (tests/test_frontend.py)

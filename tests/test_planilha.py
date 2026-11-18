@@ -52,11 +52,48 @@ class TestEstrutura(unittest.TestCase):
         aba = self.livro["Alternativas"]
         cabecalho, primeira = linhas(aba)[:2]
         self.assertEqual(cabecalho, ["Nº", "Fabricante", "MPN", "Ciclo de vida", "URL da fonte",
-                                     "tensão de saída (= 3,3 V)", "corrente de saída (>= 1 A)",
+                                     "tensão de saída (= 3,3 V)", "corrente de saída (≥ 1 A)",
                                      "Encapsulamento (SOT-223)"])
         self.assertEqual(primeira, [1, "Acme", "AC1117-3.3", "ativo", "https://acme.example/ac1117",
-                                    "3,3 V (confirmado)", "(indício)", "(confirmado)"])
+                                    "3,3 V (confirmado)", "(indício)", "SOT-223 (confirmado)"])
         self.assertEqual(aba.max_row, 3)  # cabeçalho + 2 componentes
+
+    def test_encapsulamento_so_aparece_quando_foi_achado(self):
+        casos = {
+            "confirmado": "SOT-223 (confirmado)",
+            "indicio": "SOT-223 (indício)",
+            "nao_encontrado": "(não encontrado)",  # o pedido NÃO é escrito como se tivesse sido achado
+            "contradiz": "(contradiz)",
+        }
+        for situacao, esperado in casos.items():
+            with self.subTest(situacao=situacao):
+                citacao = "" if situacao == "nao_encontrado" else "Package: SOT-89"
+                evidencia = {"requisito": "encapsulamento", "situacao": situacao, "citacao": citacao}
+                livro = abrir(gp.gerar_planilha(PEDIDO, [achado(evidencias=[evidencia])], "", []))
+                self.assertEqual(livro["Alternativas"]["H2"].value, esperado)
+        sem = abrir(gp.gerar_planilha(PEDIDO, [achado(evidencias=[])], "", []))
+        self.assertEqual(sem["Alternativas"]["H2"].value, "sem evidência")
+
+    def test_operadores_padronizados_e_sem_formula(self):
+        requisitos = [
+            {"parametro": "tensão", "operador": "=", "valor": 3.3, "unidade": "V"},
+            {"parametro": "corrente", "operador": ">=", "valor": 1, "unidade": "A"},
+            {"parametro": "queda", "operador": "<=", "valor": 1.2, "unidade": "V"},
+            {"parametro": "entrada", "operador": "faixa", "valor": 4.5, "valor_max": 15, "unidade": "V"},
+        ]
+        pedido = PedidoComponente(categoria="LDO", requisitos=requisitos)
+        livro = abrir(gp.gerar_planilha(pedido, [achado(evidencias=[])], "", []))
+        operadores = [linha[1] for linha in linhas(livro["Pedido e alertas"]) if linha[0] in ("tensão", "corrente",
+                                                                                              "queda", "entrada")]
+        self.assertEqual(operadores, ["igual (=)", "maior ou igual (≥)", "menor ou igual (≤)", "faixa"])
+        self.assertEqual(linhas(livro["Alternativas"])[0][5:9],
+                         ["tensão (= 3,3 V)", "corrente (≥ 1 A)", "queda (≤ 1,2 V)", "entrada (faixa 4,5 a 15 V)"])
+        for aba in livro.worksheets:  # nenhuma célula de nenhuma aba vira fórmula
+            for linha in aba.iter_rows():
+                for celula in linha:
+                    self.assertNotEqual(celula.data_type, "f", f"{aba.title}!{celula.coordinate}")
+                    if isinstance(celula.value, str):
+                        self.assertFalse(celula.value.startswith(gp._INICIO_DE_FORMULA), celula.value)
 
     def test_cores_por_situacao(self):
         aba = self.livro["Alternativas"]
@@ -74,7 +111,8 @@ class TestEstrutura(unittest.TestCase):
 
     def test_pedido_e_alertas(self):
         valores = [v for linha in linhas(self.livro["Pedido e alertas"]) for v in linha if v is not None]
-        for esperado in ("regulador linear (LDO)", "SOT-223", "tensão de saída", "igual a", "≥", "Dois LDOs.",
+        for esperado in ("regulador linear (LDO)", "SOT-223", "tensão de saída", "igual (=)", "maior ou igual (≥)",
+                         "Dois LDOs.",
                          "alerta 1", "(nenhum)", "(sem comentário)"):  # sem recusados nem comentário da LLM
             self.assertIn(esperado, valores)
 
