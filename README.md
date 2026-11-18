@@ -23,17 +23,14 @@ pelo código.
 
 ## Por que este projeto existe
 
-Este repositório é a versão pública e provisória de um sistema construído para um caso corporativo que não podia ser
-exposto. Para mostrar o trabalho sem expor aquele caso, o domínio foi trocado por um neutro: componentes eletrônicos
-escolhidos por especificação, com datasheets públicos como fonte.
+Este repositório é a versão pública e simplificada de um sistema construído para um caso corporativo que não podia ser
+exposto. O sistema original é uma versão mais complexa e faz parte do meu trabalho enquanto estagiário em Desenvolvimento de Software e IA na FDTE (Fundação para o Desenvolvimento Tecnológico da Engenharia), onde fui responsável pelo escopo completo, desde a análise de requisitos até o deploy. Para conseguir mostrar meu trabalho sem expor aquele caso, o domínio foi trocado por um neutro: buscar na web por componentes eletrônicos
+escolhidos por especificação, com datasheets públicos como fonte. O sistema estrutura os dados encontrados para se adequar ao esquema de uma planilha final, que é gerada automaticamente.
 
-O que interessa aqui é a arquitetura. Agentes de LLM são bons para buscar, ler e propor, mas inventam com facilidade.
+O que interessa aqui é a arquitetura. Agentes de LLM são bons para buscar, ler e propor. Além de lidarem bem com grandes quantidades de dados pouco estruturados (como textos de páginas da web). Por outro lado, costumam inventar com facilidade.
 Por isso a LLM só **propõe**: cada componente vem com citações das páginas que ela leu, e um código determinístico
 **confere** se cada citação existe na página, se os números batem com o pedido e se o código da peça aparece na fonte.
-No fim, uma **pessoa** revisa as provas e escolhe o que vai para a planilha.
-
-É um projeto enxuto e em evolução: faz uma coisa (pesquisar componentes de uma categoria por vez), com limitações
-descritas abaixo sem rodeios.
+No fim, uma **pessoa** revisa as provas e escolhe o que vai para a planilha (a revisão humana foi uma exigência do sistema original, pois envolve decisões técnicas mais específicas).
 
 ## O que ele faz
 
@@ -62,6 +59,12 @@ flowchart LR
    pedido.
 
 ## Experimente sem chaves
+
+A execução real do projeto envolve o uso de chaves de duas APIs pagas:
+- [Tavily](https://www.tavily.com/): fornece as ferramentas de busca e leitura na web com fácil comunicação com agentes LLM.
+- [Together AI](https://www.together.ai/): fornece a interface para a invocação de modelos de linguagem abertos.
+
+Por isso, aqui o repositório oferece uma forma de simular a execução gratuitamente, usando um exemplo real que foi produzido no fluxo completo. Mas caso você queira realmente executar suas próprias pesquisas, [as instruções estão aqui](#rodar-com-suas-chaves).
 
 Três formas, nenhuma chama API nem precisa de `.env`:
 
@@ -141,12 +144,6 @@ A execução de referência (o pedido de `exemplos/pedido_regulador.json`, grava
 | Custo estimado | cerca de US$ 0,03 |
 | Alertas | 1: num componente, o código completo da peça não estava no texto extraído, só a família |
 
-O exemplo mais didático veio de outra execução (que não está no repositório): a LLM propôs um quarto componente, com
-um texto de resumo que o apresentava como provado. A conferência o **recusou**, porque o código da peça (MPN) não
-aparecia na página citada como fonte, nem mesmo como família. O resumo que a tela mostra é escrito pelo código a
-partir da conferência; o texto da LLM aparece à parte, rotulado como não conferido, e o código ainda avisa quando esse
-texto cita um componente recusado.
-
 ## A LLM propõe, o código prova
 
 Para cada componente registrado, o código confere (regras completas em [docs/regras.md](docs/regras.md)):
@@ -159,6 +156,8 @@ Para cada componente registrado, o código confere (regras completas em [docs/re
   alerta; se nem a família aparece, é recusado.
 - **Fonte**: a URL precisa ser de uma página que as ferramentas leram com sucesso nesta pesquisa.
 - **Ciclo de vida**: "obsoleto" e "nrnd" (não recomendado para projetos novos) recusam; "desconhecido" gera alerta.
+
+Em outra execução, a LLM propôs um quarto componente e o código o recusou: o código da peça não aparecia em nenhuma página lida. 
 
 ## Decisões de design e segurança
 
@@ -180,29 +179,22 @@ Para cada componente registrado, o código confere (regras completas em [docs/re
 
 ## Limitações conhecidas
 
-As da conferência estão detalhadas em [docs/regras.md](docs/regras.md#limitações-conhecidas). Em resumo:
+- **A conferência prova a frase e o número, não o sentido.** Ela garante que a citação existe na página lida e que o
+  valor atende ao requisito, mas não interpreta se a frase trata exatamente do parâmetro pedido. É por isso que a
+  revisão humana faz parte do fluxo.
+- **O texto lido das páginas é parcial.** A leitura traz trechos dos datasheets, e o código completo da peça nem
+  sempre está neles; nesse caso o componente é aceito pela família, com um alerta para a revisão.
+- **O resultado varia entre execuções**, porque a LLM escolhe buscas e fontes diferentes a cada pesquisa.
 
-1. Uma citação genérica da família pode confirmar um MPN específico, e o código não distingue.
-2. A conferência prova que a frase existe e que o número bate, mas não a semântica: "current limit" não é
-   necessariamente a corrente de saída especificada.
-3. O MPN exato quase nunca aparece no texto extraído (que é feito de trechos de PDFs), por isso o alerta "só a
-   família" é comum.
-4. Intervalos como "4.5-28 V" produzem uma só quantidade (o máximo, 28 V).
-5. As fontes às vezes são páginas de distribuidores, não do fabricante (aconteceu na execução de referência).
-6. O resultado varia entre execuções com o mesmo pedido.
-7. O limite de pesquisas por sessão é um freio, não uma cota.
+Os casos de borda da conferência estão em [docs/regras.md](docs/regras.md#limitações-conhecidas).
 
-Além disso: o estado da interface vive só na memória da sessão (fechar a aba perde a pesquisa; o pacote `.zip` é a
-forma de guardá-la), e o projeto só foi testado com Python 3.12 e com as versões fixadas no `requirements.txt`
-(atualizá-las pede rodar a suíte de novo).
-
-## Roadmap
-
+## Roadmap e extensões do sistema original
+Esta seção na verdade explica avanços que já realizei no projeto original, que ainda não pode ser público. Apesar do objeto de pesquisa ser outro, as ideias descritas aqui são análogas:
 - Cotação em distribuidores brasileiros.
 - Pesquisa em lote de variantes de um mesmo pedido.
 - Imagens do componente, com download protegido contra SSRF (entra quando houver imagens na interface).
+- Uso de VLMs para detectar problemas nas imagens e processá-las de forma a seguirem alguns critérios desejados.
 - Deploy em servidor.
-- Mais categorias de componentes.
 
 ## Estrutura do repositório
 
