@@ -19,6 +19,7 @@ from backend.compartilhado.versao import VERSAO  # noqa: E402
 from frontend import estado, estilo, protecao  # noqa: E402
 from frontend.secoes import pedido, pesquisa, resultado, revisao  # noqa: E402
 
+AVISO_DEMONSTRACAO = "Demonstração: repetição de uma execução gravada. Nenhuma API foi chamada."
 SECOES = {"pedido": pedido.render, "pesquisa": pesquisa.render, "revisao": revisao.render, "resultado": resultado.render}
 
 
@@ -40,4 +41,6 @@ estilo.aplicar()
 protecao.exigir_senha()  # sem a senha (quando houver uma), o script PARA aqui
 pesquisa.avancar_se_concluida()
 _menu()
+if estado.ler(estado.DEMONSTRACAO):  # em TODAS as etapas, enquanto a demonstração estiver em andamento ou concluída
+    st.warning(AVISO_DEMONSTRACAO)
 SECOES.get(estado.etapa(), pedido.render)()

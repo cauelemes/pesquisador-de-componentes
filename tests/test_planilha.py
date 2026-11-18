@@ -94,6 +94,13 @@ class TestEstrutura(unittest.TestCase):
         self.assertEqual(pares[i_recusados + 1], ("AP2114H-3.3TRG1 (Diodes)", "MPN não aparece na página"))
         self.assertEqual(pares[i_llm], ("Comentário da LLM (não conferido)", "Encontrei 2 LDOs ótimos."))
 
+    def test_planilha_da_demonstracao_avisa(self):
+        normal = abrir(gp.gerar_planilha(PEDIDO, [achado()], "ok", []))
+        demonstracao = abrir(gp.gerar_planilha(PEDIDO, [achado()], "ok", [], demonstracao=True))
+        self.assertEqual(linhas(demonstracao["Pedido e alertas"])[1][:2], ["Atenção", gp.AVISO_DEMONSTRACAO])
+        self.assertIn("Gerado a partir de uma execução gravada", gp.AVISO_DEMONSTRACAO)
+        self.assertNotIn(gp.AVISO_DEMONSTRACAO, [v for linha in linhas(normal["Pedido e alertas"]) for v in linha])
+
     def test_formatacao(self):
         for aba in self.livro.worksheets:
             with self.subTest(aba=aba.title):

@@ -50,11 +50,18 @@ def executar_pesquisa(
     esforco: str | None = None,
     timeout: float = TIMEOUT_CHAMADA_SEGUNDOS,
     ao_evento: Callable[[EventoDeProgresso], None] | None = None,
+    chamar_llm: Callable | None = None,
+    buscar: Callable | None = None,
+    ler: Callable | None = None,
+    demonstracao: bool = False,
 ) -> ExecucaoPesquisa:
     """Roda a pesquisa, mede a duração e o uso, e monta o registro.
 
     O contador de uso é um `ColetorDeUso` NOVO, ativo só durante esta pesquisa: assim o registro traz o gasto DELA, e
     não o da sessão inteira. (Quando houver frontend com contador da sessão, ele precisará somar este resumo ao dele.)
+
+    `chamar_llm`, `buscar` e `ler` trocam os clientes reais (padrão: os reais); `demonstracao=True` marca o registro
+    como repetição de uma gravação (ver `pesquisa/demo.py`).
     """
     coletor = contador_de_uso.ColetorDeUso()
     inicio = _agora()
@@ -62,9 +69,11 @@ def executar_pesquisa(
         relatorio = pesquisar(
             pedido, orcamento=orcamento, cancelar=cancelar, modelo=modelo, esforco=esforco, timeout=timeout,
             ao_evento=ao_evento,  # acompanhamento opcional: o terminal e a tela passam o seu
+            chamar_llm=chamar_llm, buscar=buscar, ler=ler,
         )
     fim = _agora()
-    registro = montar_registro(pedido, relatorio, inicio, fim, modelo, esforco, uso=coletor.resumo())
+    registro = montar_registro(pedido, relatorio, inicio, fim, modelo, esforco, uso=coletor.resumo(),
+                               demonstracao=demonstracao)
     return ExecucaoPesquisa(relatorio=relatorio, registro=registro)
 
 
@@ -100,6 +109,7 @@ def montar_pacote(registro: RegistroPesquisa, achados_escolhidos: list[AchadoCom
         resultado.alertas,
         recusados=resultado.recusados,
         resumo_da_llm=resultado.resumo_da_llm,
+        demonstracao=registro.demonstracao,
     )
     memoria = BytesIO()
     with zipfile.ZipFile(memoria, "w", compression=zipfile.ZIP_DEFLATED) as pacote:

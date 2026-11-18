@@ -51,7 +51,7 @@ class TestMontarRegistro(unittest.TestCase):
     def test_tem_todos_os_campos(self):
         r = registro_feliz()
         esperados = {"versao", "inicio", "fim", "duracao_segundos", "modelo", "esforco", "pedido", "resultado",
-                     "orcamento", "uso", "passos", "paginas", "paginas_com_erro"}
+                     "orcamento", "uso", "passos", "paginas", "paginas_com_erro", "demonstracao"}
         self.assertEqual(set(rg.RegistroPesquisa.model_fields), esperados)
         self.assertEqual(r.versao, rg.VERSAO)
         self.assertEqual(r.duracao_segundos, 95.5)
@@ -62,6 +62,7 @@ class TestMontarRegistro(unittest.TestCase):
         self.assertEqual(len(r.passos), 2)
         self.assertEqual(r.paginas, ta.PAGINAS)  # o MESMO texto que a LLM recebeu
         self.assertEqual(r.paginas_com_erro, {})
+        self.assertFalse(r.demonstracao)  # uma pesquisa de verdade
 
     def test_guarda_os_dois_resumos_e_os_recusados(self):
         errado = ta.achado("Delta", "XX999", ta.U3)

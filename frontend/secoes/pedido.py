@@ -8,8 +8,10 @@ import streamlit as st
 from pydantic import ValidationError
 
 from backend.compartilhado.modelos import PedidoComponente
+from backend.pesquisa import demo
+from backend.pesquisa.registro import ErroDeRegistro
 
-from .. import estado, execucao, protecao
+from .. import estado, execucao, protecao, texto
 
 EXEMPLO = Path(__file__).resolve().parents[2] / "exemplos" / "pedido_regulador.json"
 AVISO_SEM_CHAVES = "Configure TOGETHER_API_KEY e TAVILY_API_KEY no arquivo .env (veja o README)"
@@ -111,8 +113,17 @@ def montar_pedido(categoria: str, encapsulamento: str, tabela: pd.DataFrame):
 # ---------------------------------------------------------------------------------------------------------------------
 # Callbacks (rodam ANTES da próxima execução do script: é o jeito certo de mudar o estado a partir de um botão)
 # ---------------------------------------------------------------------------------------------------------------------
-def carregar_exemplo() -> None:
-    pedido = PedidoComponente.model_validate_json(EXEMPLO.read_text(encoding="utf-8"))
+def _marcar_tocado() -> None:
+    """Callback de edição: a partir da primeira, os erros do pedido aparecem (antes, só atrapalhariam)."""
+    estado.gravar(estado.PEDIDO_TOCADO, True)
+
+
+def _preencher_formulario(pedido: PedidoComponente) -> None:
+    estado.gravar(estado.PEDIDO_TOCADO, True)
+    # As CÓPIAS também: se a tela sair do pedido logo em seguida (a demonstração vai direto à etapa 2), o Streamlit
+    # apaga o estado dos campos, e é das cópias que eles voltam (ver `_restaurar_pedido`).
+    estado.gravar(estado.COPIA_CATEGORIA, pedido.categoria)
+    estado.gravar(estado.COPIA_ENCAPSULAMENTO, pedido.encapsulamento or "")
     estado.gravar(estado.CAMPO_CATEGORIA, pedido.categoria)
     estado.gravar(estado.CAMPO_ENCAPSULAMENTO, pedido.encapsulamento or "")
     estado.gravar(estado.REQUISITOS_EDITADOS, None)
@@ -123,6 +134,24 @@ def carregar_exemplo() -> None:
     ]))
     # O editor guarda as EDIÇÕES pela chave; trocar a chave faz ele recomeçar a partir da tabela nova.
     estado.gravar(estado.VERSAO_DO_EDITOR, estado.ler(estado.VERSAO_DO_EDITOR, 0) + 1)
+
+
+def carregar_exemplo() -> None:
+    _preencher_formulario(PedidoComponente.model_validate_json(EXEMPLO.read_text(encoding="utf-8")))
+
+
+def _iniciar_demonstracao() -> None:
+    """Repete a execução gravada. NÃO exige chaves, NÃO conta no limite e NÃO grava nada fora da sessão."""
+    try:
+        gravacao = demo.carregar_gravacao()
+    except (demo.ErroDeReplay, ErroDeRegistro, ValidationError) as erro:
+        estado.gravar(estado.ERRO_DEMONSTRACAO, str(erro))
+        return
+    _preencher_formulario(gravacao.pedido)  # o pedido da gravação aparece no formulário
+    estado.limpar_pesquisa()
+    estado.gravar(estado.DEMONSTRACAO, True)
+    estado.gravar(estado.TRABALHO, execucao.iniciar(gravacao.pedido, gravacao=gravacao))
+    estado.ir_para("pesquisa")
 
 
 def _iniciar_pesquisa(pedido: PedidoComponente) -> None:
@@ -166,12 +195,19 @@ def _guardar_copias(tabela: pd.DataFrame) -> None:
 def render() -> None:
     _restaurar_pedido()
     st.header("1. Pedido")
-    st.button("Carregar exemplo", key="botao_exemplo", on_click=carregar_exemplo)
-    # TODO(próxima etapa): botão "Rodar demonstração (sem chaves)", que reproduz um registro salvo, sem gastar créditos.
+    exemplo, demonstracao = st.columns(2)
+    exemplo.button("Carregar exemplo", key="botao_exemplo", on_click=carregar_exemplo)
+    demonstracao.button("Rodar demonstração (sem chaves)", key="botao_demo", on_click=_iniciar_demonstracao,
+                        help="Repete uma execução real gravada: sem chaves, sem rede e sem custo.")
+    if estado.ler(estado.ERRO_DEMONSTRACAO):
+        st.error("Não foi possível abrir a demonstração.")
+        texto.mostrar(estado.ler(estado.ERRO_DEMONSTRACAO))
 
-    st.text_input("Categoria do componente", key=estado.CAMPO_CATEGORIA, placeholder="ex.: regulador linear (LDO)")
+    st.text_input("Categoria do componente", key=estado.CAMPO_CATEGORIA, placeholder="ex.: regulador linear (LDO)",
+                  on_change=_marcar_tocado)
     lugar_categoria = st.empty()  # reservado: os erros só são conhecidos depois de ler todos os campos
-    st.text_input("Encapsulamento (opcional)", key=estado.CAMPO_ENCAPSULAMENTO, placeholder="ex.: SOT-223")
+    st.text_input("Encapsulamento (opcional)", key=estado.CAMPO_ENCAPSULAMENTO, placeholder="ex.: SOT-223",
+                  on_change=_marcar_tocado)
     lugar_encapsulamento = st.empty()
 
     st.markdown("**Requisitos** (de 1 a 8)")
@@ -179,6 +215,7 @@ def render() -> None:
         estado.ler(estado.REQUISITOS_BASE, _tabela_vazia()),
         key=_chave_do_editor(),
         num_rows="dynamic",
+        on_change=_marcar_tocado,
         hide_index=True,
         width="stretch",
         column_config={
@@ -197,9 +234,12 @@ def render() -> None:
     pedido, erros = montar_pedido(
         estado.ler(estado.CAMPO_CATEGORIA, ""), estado.ler(estado.CAMPO_ENCAPSULAMENTO, ""), tabela
     )
-    _mostrar_erros(lugar_categoria, erros.get("categoria", []))
-    _mostrar_erros(lugar_encapsulamento, erros.get("encapsulamento", []))
-    _mostrar_erros(lugar_requisitos, erros.get("requisitos", []))
+    if estado.ler(estado.PEDIDO_TOCADO):  # erros só depois da primeira edição
+        _mostrar_erros(lugar_categoria, erros.get("categoria", []))
+        _mostrar_erros(lugar_encapsulamento, erros.get("encapsulamento", []))
+        _mostrar_erros(lugar_requisitos, erros.get("requisitos", []))
+    elif pedido is None:
+        st.caption("Preencha a categoria e pelo menos um requisito para pesquisar (ou carregue o exemplo).")
 
     sem_chaves = bool(execucao.chaves_faltando())
     if sem_chaves:

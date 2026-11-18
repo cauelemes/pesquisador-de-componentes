@@ -43,6 +43,9 @@ def render() -> None:
     saida.metric("Tokens de saída", _inteiro(uso.tokens_saida), help=f"{_inteiro(uso.tokens_raciocinio)} de raciocínio")
     custo.metric("Custo estimado", f"US$ {uso.custo_estimado_usd:.4f}".replace(".", ","))
     duracao.metric("Duração", f"{registro.duracao_segundos:.0f} s")
-    st.caption("Custo estimado com os preços de referência do código; confira a tabela de preços da Together.")
+    if registro.demonstracao:
+        st.caption("Na demonstração nenhuma API foi chamada: o uso desta repetição é zero.")
+    else:
+        st.caption("Custo estimado com os preços de referência do código; confira a tabela de preços da Together.")
 
     st.button("Nova pesquisa", key="botao_nova", type="primary", on_click=_nova_pesquisa)

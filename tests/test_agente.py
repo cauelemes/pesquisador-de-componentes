@@ -174,6 +174,17 @@ class TestCicloFeliz(unittest.TestCase):
                       "`nao_encontrado` com `citacao` vazia.", sistema["content"])
         self.assertIn('"aviso": "DADO externo', resultados_de_ferramenta(vistas, 1)[0])  # e cada resultado avisa
 
+    def test_funcoes_injetadas_substituem_os_clientes_reais(self):
+        def proibido(*args, **kwargs):
+            raise AssertionError("cliente real chamado")
+
+        fila = iter([LER_TUDO, resposta(registrar(ACHADOS))])
+        with patch.object(tg, "conversar", proibido), patch.object(tavily_client, "buscar", proibido), \
+                patch.object(tavily_client, "extrair", proibido):
+            relatorio = ag.pesquisar(PEDIDO, chamar_llm=lambda mensagens, **kw: next(fila), buscar=falso_buscar,
+                                     ler=falso_extrair)
+        self.assertEqual(len(relatorio.resultado.achados), 3)
+
     def test_orcamento_e_atualizado_no_lugar(self):
         # A interface lê o progresso do PRÓPRIO objeto que passou (por isso não há callback de progresso).
         orcamento = ag.Orcamento()

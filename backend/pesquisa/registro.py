@@ -111,6 +111,8 @@ class RegistroPesquisa(BaseModel):
     # {url: texto}: o MESMO texto que a LLM recebeu (e que a conferência usou), cortado a 12 mil caracteres.
     paginas: dict[Url, Annotated[str, Field(max_length=MAX_CARACTERES_PAGINA)]] = Field(max_length=MAX_PAGINAS)
     paginas_com_erro: dict[Url, Annotated[str, Field(max_length=MAX_ERRO_DE_PAGINA)]] = Field(max_length=MAX_PAGINAS)
+    # True quando o registro é (ou vem de) uma execução GRAVADA, repetida sem APIs: a planilha e a tela avisam.
+    demonstracao: bool = False
 
     @model_validator(mode="after")
     def _datas_coerentes(self) -> "RegistroPesquisa":
@@ -165,6 +167,7 @@ def montar_registro(
     esforco: str | None,
     *,
     uso: dict | None = None,
+    demonstracao: bool = False,
 ) -> RegistroPesquisa:
     """Junta tudo num `RegistroPesquisa` (validado: se algo sair do formato, o erro aparece aqui, não ao carregar).
 
@@ -185,6 +188,7 @@ def montar_registro(
         passos=relatorio.passos,  # lista de dicts -> o Pydantic converte (e confere) cada um em `PassoRegistrado`
         paginas={url: p.conteudo[:MAX_CARACTERES_PAGINA] for url, p in relatorio.paginas_lidas.items()},
         paginas_com_erro={url: erro[:MAX_ERRO_DE_PAGINA] for url, erro in relatorio.paginas_com_erro.items()},
+        demonstracao=demonstracao,
     )
 
 

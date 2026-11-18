@@ -29,6 +29,9 @@ COPIA_CATEGORIA = "copia_categoria"
 COPIA_ENCAPSULAMENTO = "copia_encapsulamento"
 REQUISITOS_EDITADOS = "requisitos_editados"
 VERSAO_DO_EDITOR = "versao_do_editor"  # muda para o editor recomeçar do zero (ver `secoes.pedido`)
+PEDIDO_TOCADO = "pedido_tocado"  # o usuário já editou algo? (só então os erros do pedido aparecem)
+DEMONSTRACAO = "demonstracao"  # a pesquisa atual é a REPETIÇÃO de uma gravação (aviso no topo de todas as etapas)
+ERRO_DEMONSTRACAO = "erro_demonstracao"
 
 # Chaves de widgets (o Streamlit guarda o valor do widget em session_state[chave]).
 CAMPO_CATEGORIA = "campo_categoria"
@@ -36,7 +39,7 @@ CAMPO_ENCAPSULAMENTO = "campo_encapsulamento"
 CAMPO_SENHA = "campo_senha"
 
 # O que pertence a UMA pesquisa (é apagado em "Nova pesquisa" e "Voltar ao pedido").
-_DA_PESQUISA = (TRABALHO, REGISTRO, ESCOLHIDOS, PACOTE, ERRO_AO_GERAR)
+_DA_PESQUISA = (TRABALHO, REGISTRO, ESCOLHIDOS, PACOTE, ERRO_AO_GERAR, DEMONSTRACAO, ERRO_DEMONSTRACAO)
 
 
 def ler(chave: str, padrao=None):

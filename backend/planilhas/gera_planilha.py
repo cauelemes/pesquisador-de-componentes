@@ -28,6 +28,7 @@ from ..compartilhado.modelos import (
 from ..pesquisa.conferencia import NOMES_ENCAPSULAMENTO, normalizar_texto
 
 MAX_ACHADOS_NA_PLANILHA = 5
+AVISO_DEMONSTRACAO = "Gerado a partir de uma execução gravada (modo demonstração): nenhuma API foi chamada."
 MAX_CARACTERES_CELULA = 32_000  # o Excel aceita até 32.767; ficamos um pouco abaixo
 # Começos que fazem o Excel (ou o LibreOffice) tratar o texto como fórmula. Tab e retorno de carro também entram na
 # lista da OWASP ("CSV injection"), porque alguns programas os ignoram e leem o que vem depois.
@@ -170,8 +171,12 @@ def _aba_pedido(
     recusados: list[AchadoRecusado],
     resumo_da_llm: str,
     alertas: list[str],
+    demonstracao: bool,
 ) -> None:
     _escrever_linha(aba, ["Campo", "Valor"])
+    if demonstracao:  # antes de tudo: quem abrir a planilha precisa saber que ela não veio de uma pesquisa nova
+        _escrever_linha(aba, ["Atenção", AVISO_DEMONSTRACAO])
+        aba.cell(row=aba.max_row, column=1).font = _CABECALHO_FONTE
     _escrever_linha(aba, ["Categoria", pedido.categoria])
     _escrever_linha(aba, ["Encapsulamento", pedido.encapsulamento or "(não especificado)"])
 
@@ -214,6 +219,7 @@ def gerar_planilha(
     *,
     recusados: list[AchadoRecusado] = (),
     resumo_da_llm: str = "",
+    demonstracao: bool = False,
 ) -> bytes:
     """Monta a planilha e devolve os BYTES do .xlsx (para baixar ou pôr num .zip).
 
@@ -230,7 +236,8 @@ def gerar_planilha(
     alternativas.title = "Alternativas"
     _aba_alternativas(alternativas, pedido, achados)
     _aba_evidencias(livro.create_sheet("Evidências"), achados)
-    _aba_pedido(livro.create_sheet("Pedido e alertas"), pedido, resumo_conferido, list(recusados), resumo_da_llm, alertas)
+    _aba_pedido(livro.create_sheet("Pedido e alertas"), pedido, resumo_conferido, list(recusados), resumo_da_llm, alertas,
+                demonstracao)
 
     memoria = BytesIO()  # um "arquivo" na memória: nada é gravado em disco
     livro.save(memoria)

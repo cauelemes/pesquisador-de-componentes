@@ -129,9 +129,13 @@ class _Ciclo:
 
     def __init__(self, pedido: PedidoComponente, orcamento: Orcamento, cancelar: Callable[[], bool] | None,
                  modelo: str, esforco: str | None, timeout: float,
-                 ao_evento: Callable[[EventoDeProgresso], None] | None = None):
+                 ao_evento: Callable[[EventoDeProgresso], None] | None = None, clientes: tuple = (None, None, None)):
         self.pedido = pedido
         self.ao_evento, self.inicio = ao_evento, time.monotonic()  # acompanhamento opcional (ver `progresso.py`)
+        # LLM, busca e leitura: os reais por padrão, lidos AGORA (vale a troca feita num teste); a demonstração passa os seus.
+        chamar_llm, buscar, ler = clientes
+        self.conversar, self.buscar_web, self.ler_web = (chamar_llm or tg.conversar, buscar or tavily_client.buscar,
+                                                         ler or tavily_client.extrair)
         self.orc = orcamento
         self.cancelar = cancelar or (lambda: False)
         self.modelo, self.esforco, self.timeout = modelo, esforco, timeout
@@ -205,7 +209,7 @@ class _Ciclo:
                         "timeout": self.timeout}
         if self.esforco:  # `conversar` não tem um argumento próprio: vai em `parametros_extras`, repassado à API
             opcoes["parametros_extras"] = {"reasoning_effort": self.esforco}
-        return tg.conversar(self.mensagens, ferramentas=FERRAMENTAS, tool_choice=tool_choice, **opcoes)
+        return self.conversar(self.mensagens, ferramentas=FERRAMENTAS, tool_choice=tool_choice, **opcoes)
 
     def _passo(self, *, tool_choice, final: bool = False) -> bool:
         """Uma chamada à LLM e a execução das ferramentas pedidas. Devolve False se o ciclo deve parar."""
@@ -303,7 +307,7 @@ class _Ciclo:
             return "Recusado: consulta repetida. Use outros termos, outro fabricante ou outro idioma."
         if self.orc.buscas_usadas >= self.orc.buscas:
             return "Recusado: orçamento de buscas esgotado. Leia páginas já encontradas ou registre."
-        resultados = tavily_client.buscar(
+        resultados = self.buscar_web(
             consulta, max_resultados=MAX_RESULTADOS_BUSCA, excluir_dominios=list(REDES_SOCIAIS)
         )
         self.consultas.add(chave)  # só conta depois de dar certo: uma falha de rede não "queima" a consulta
@@ -331,7 +335,7 @@ class _Ciclo:
             if self.orc.leituras_usadas >= self.orc.leituras:
                 return "Recusado: orçamento de leituras esgotado. Registre com o que já foi lido."
             self._evento("leitura", url)  # ANTES: a leitura pode levar dezenas de segundos
-            lida = tavily_client.extrair([url], foco=self.foco)[0]
+            lida = self.ler_web([url], foco=self.foco)[0]
             self.orc.leituras_usadas += 1
             if lida.erro or not lida.conteudo:  # falhou ("Failed to fetch url") ou veio vazia: NÃO é página lida
                 erro = self.falhas[url] = (lida.erro or "a página veio sem texto")[:200]
@@ -419,6 +423,9 @@ def pesquisar(
     esforco: str | None = None,
     timeout: float = TIMEOUT_CHAMADA_SEGUNDOS,
     ao_evento: Callable[[EventoDeProgresso], None] | None = None,
+    chamar_llm: Callable | None = None,
+    buscar: Callable | None = None,
+    ler: Callable | None = None,
 ) -> RelatorioPesquisa:
     """Roda uma pesquisa completa para o `pedido`.
 
@@ -430,13 +437,14 @@ def pesquisar(
         esforco: esforço de raciocínio ("low", "high" ou "max"); None não envia nada e vale o padrão do modelo.
         timeout: segundos de espera por CADA chamada à LLM. Esgotado, vira alerta e volta o resultado parcial.
         ao_evento: recebe um `EventoDeProgresso` a cada passo, busca, leitura, registro e aviso (ver `progresso.py`).
+        chamar_llm, buscar, ler: trocam `tg.conversar` e o Tavily (mesmas assinaturas). Usados pela demonstração.
 
-    Raises:
-        ValueError: `esforco` inválido ou `timeout` <= 0 (erro de quem chama: falha antes de gastar créditos).
-        Não levanta erro por falha da LLM ou do Tavily (nem tempo esgotado): isso vira alerta no resultado.
+    Raises: ValueError (`esforco` inválido ou `timeout` <= 0), antes de gastar créditos. Falha da LLM, do Tavily ou
+        tempo esgotado NÃO levantam erro: viram alerta no resultado.
     """
     if esforco is not None and esforco not in ESFORCOS_ACEITOS:
         raise ValueError(f"esforco deve ser um de {ESFORCOS_ACEITOS} (ou None), não {esforco!r}")
     if timeout <= 0:
         raise ValueError("timeout precisa ser maior que zero")
-    return _Ciclo(pedido, orcamento or Orcamento(), cancelar, modelo, esforco, timeout, ao_evento).executar()
+    return _Ciclo(pedido, orcamento or Orcamento(), cancelar, modelo, esforco, timeout, ao_evento,
+                  (chamar_llm, buscar, ler)).executar()

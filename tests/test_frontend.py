@@ -7,6 +7,7 @@ que apareceu. A pesquisa é trocada por uma função falsa que devolve um result
 """
 
 import inspect
+import json
 import os
 import threading
 import unittest
@@ -41,10 +42,11 @@ class BaseApp(unittest.TestCase):
 
     execucao_falsa = None  # cada classe pode trocar
     usar_segredos_do_teste = False  # True: lê a senha pelo caminho REAL (st.secrets), preenchido com `at.secrets`
+    trocar_pesquisa = True  # False: a pesquisa segue o caminho REAL (usado pela demonstração)
 
     def setUp(self):
         self.chamadas = []
-        patchers = [patch.object(servico, "executar_pesquisa", side_effect=self.pesquisa_falsa)]
+        patchers = [patch.object(servico, "executar_pesquisa", side_effect=self.pesquisa_falsa)] if self.trocar_pesquisa else []
         if not self.usar_segredos_do_teste:  # sem isto, o app leria o .streamlit/secrets.toml REAL de quem roda
             patchers.append(patch.object(protecao, "_senha_dos_segredos", return_value=None))
         for p in patchers:
@@ -92,9 +94,13 @@ class TestPedido(BaseApp):
     def test_pedido_invalido_desabilita_pesquisar_e_mostra_o_erro(self):
         at = self.abrir()
         self.assertTrue(at.button(key="botao_pesquisar").disabled)
-        erros = [e.value for e in at.error]
-        self.assertIn("Categoria: não pode ficar vazio", erros)
-        self.assertIn("Requisitos: informe pelo menos 1 requisito", erros)
+        self.assertEqual([e.value for e in at.error], [])  # antes de qualquer edição: sem erros, só uma dica
+        self.assertIn("Preencha a categoria e pelo menos um requisito para pesquisar (ou carregue o exemplo).",
+                      [c.value for c in at.caption])
+
+        at.text_input(key=estado.CAMPO_CATEGORIA).input("LDO").run()  # a primeira edição
+        self.assertTrue(at.button(key="botao_pesquisar").disabled)
+        self.assertIn("Requisitos: informe pelo menos 1 requisito", [e.value for e in at.error])
 
     def test_carregar_exemplo_preenche_o_pedido(self):
         at = self.clicar(self.abrir(), "botao_exemplo")
@@ -271,6 +277,71 @@ class TestLimitesEChaves(BaseApp):
                           [w.value for w in at.warning])
             self.assertTrue(at.button(key="botao_pesquisar").disabled)
         self.assertEqual(self.chamadas, [])
+
+
+class TestDemonstracao(BaseApp):
+    """A demonstração pelo caminho REAL (agente, conferência, registro, planilha), com só a LLM/busca/leitura gravadas."""
+
+    trocar_pesquisa = False
+    AVISO = "Demonstração: repetição de uma execução gravada. Nenhuma API foi chamada."
+
+    def setUp(self):
+        super().setUp()
+        from backend.pesquisa import demo
+        from tests import test_demo
+
+        gravacao = test_demo.gravar()  # uma gravação pequena, feita pelo pipeline simulado
+        sem_chaves = {k: v for k, v in os.environ.items() if k not in execucao.CHAVES_DE_API}
+        patchers = [
+            patch.object(demo, "carregar_gravacao", return_value=gravacao),
+            patch.object(execucao, "ATRASO_DEMONSTRACAO", 0.3),  # o bastante para ver a etapa 2 "rodando"
+            patch.dict(os.environ, sem_chaves, clear=True),  # SEM chaves
+            *test_demo.sem_apis(),  # e os clientes reais falham se forem chamados
+        ]
+        for p in patchers:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def avisos(self, at) -> list[str]:
+        return [w.value for w in at.warning]
+
+    def test_fluxo_completo_sem_chaves_e_sem_contar_no_limite(self):
+        at = self.abrir()
+        self.assertTrue(at.button(key="botao_pesquisar").disabled)  # sem chaves: a pesquisa real não sai...
+        self.assertFalse(at.button(key="botao_demo").disabled)  # ...mas a demonstração sim
+        self.assertNotIn(self.AVISO, self.avisos(at))
+
+        at = self.clicar(at, "botao_demo")
+        self.assertEqual([h.value for h in at.header], ["2. Pesquisa"])
+        self.assertIn(self.AVISO, self.avisos(at))
+
+        at = self.esperar_pesquisa(at)
+        self.assertEqual([h.value for h in at.header], ["3. Revisão"])
+        self.assertIn(self.AVISO, self.avisos(at))
+        self.assertEqual(len(at.checkbox), 3)
+
+        at = self.clicar(at, "botao_gerar")
+        self.assertEqual([h.value for h in at.header], ["4. Resultado"])
+        self.assertIn(self.AVISO, self.avisos(at))
+        self.assertEqual(at.session_state[estado.PESQUISAS_FEITAS] if estado.PESQUISAS_FEITAS in at.session_state
+                         else 0, 0)
+        self.assertIn("Pesquisas restantes nesta sessão: 10", [c.value for c in at.sidebar.caption])
+
+        import zipfile
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        pacote = zipfile.ZipFile(BytesIO(at.session_state[estado.PACOTE]))
+        planilha = load_workbook(BytesIO(pacote.read(servico.ARQUIVO_PLANILHA)))
+        valores = [c.value for linha in planilha["Pedido e alertas"].iter_rows() for c in linha]
+        self.assertTrue(any(isinstance(v, str) and "Gerado a partir de uma execução gravada" in v for v in valores))
+        self.assertTrue(json.loads(pacote.read(servico.ARQUIVO_REGISTRO))["demonstracao"])
+
+        at = self.clicar(at, "botao_nova")  # nova pesquisa: a demonstração acabou, o aviso some
+        self.assertEqual([h.value for h in at.header], ["1. Pedido"])
+        self.assertNotIn(self.AVISO, self.avisos(at))
+        self.assertEqual(at.text_input(key=estado.CAMPO_CATEGORIA).value, "regulador linear (LDO)")  # o pedido gravado
 
 
 # =====================================================================================================================

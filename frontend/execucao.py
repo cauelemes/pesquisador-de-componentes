@@ -20,13 +20,16 @@ from dataclasses import dataclass, field
 
 from backend.compartilhado.modelos import PedidoComponente
 from backend.compartilhado.together_client import ErroTogether
+from backend.pesquisa import demo
 from backend.pesquisa.agente import PREFIXO_FALHA_LLM, Orcamento
 from backend.pesquisa.progresso import EventoDeProgresso
+from backend.pesquisa.registro import RegistroPesquisa
 from backend.pesquisa.tavily_client import ErroTavily
 from backend.servico import pesquisa as servico  # módulo (e não a função): os testes trocam `executar_pesquisa`
 
 CHAVES_DE_API = ("TOGETHER_API_KEY", "TAVILY_API_KEY")
 MAX_EVENTOS_GUARDADOS = 50  # a tela mostra só os últimos; guardar todos seria memória à toa
+ATRASO_DEMONSTRACAO = 0.4  # segundos por "resposta da LLM" na demonstração: só para a tela parecer viva
 
 
 def chaves_faltando() -> list[str]:
@@ -45,6 +48,7 @@ class Trabalho:
     execucao: servico.ExecucaoPesquisa | None = None
     erro: str | None = None  # mensagem para o usuário (nunca o texto cru de uma exceção desconhecida)
     thread: threading.Thread | None = None
+    gravacao: RegistroPesquisa | None = None  # preenchida: é uma DEMONSTRAÇÃO (repete a gravação, sem APIs)
     inicio: float = field(default_factory=time.monotonic)  # para o "Tempo decorrido" da tela
     eventos: list[EventoDeProgresso] = field(default_factory=list)
     trava: threading.Lock = field(default_factory=threading.Lock)
@@ -76,11 +80,17 @@ class Trabalho:
 def _trabalhar(trabalho: Trabalho) -> None:
     """O que roda DENTRO da thread. Só mexe no `trabalho` (nada de Streamlit)."""
     try:
-        trabalho.execucao = servico.executar_pesquisa(
-            trabalho.pedido, cancelar=trabalho.cancelamento.is_set, orcamento=trabalho.orcamento,
-            ao_evento=trabalho.registrar_evento,
-        )
-    except (ErroTogether, ErroTavily) as erro:  # mensagens já escritas para o usuário
+        if trabalho.gravacao is not None:  # demonstração: o mesmo caminho real, só com LLM/busca/leitura gravadas
+            trabalho.execucao = demo.repetir(
+                trabalho.gravacao, atraso=ATRASO_DEMONSTRACAO, cancelar=trabalho.cancelamento.is_set,
+                orcamento=trabalho.orcamento, ao_evento=trabalho.registrar_evento,
+            )
+        else:
+            trabalho.execucao = servico.executar_pesquisa(
+                trabalho.pedido, cancelar=trabalho.cancelamento.is_set, orcamento=trabalho.orcamento,
+                ao_evento=trabalho.registrar_evento,
+            )
+    except (ErroTogether, ErroTavily, demo.ErroDeReplay) as erro:  # mensagens já escritas para o usuário
         trabalho.erro = str(erro)
     except Exception as erro:  # qualquer outra coisa: só o TIPO vai para a tela; o detalhe vai para o terminal
         traceback.print_exc()
@@ -89,9 +99,14 @@ def _trabalhar(trabalho: Trabalho) -> None:
         trabalho.terminou.set()  # sempre: a tela precisa saber que acabou, deu certo ou não
 
 
-def iniciar(pedido: PedidoComponente) -> Trabalho:
-    """Cria o `Trabalho` e dispara a thread. `daemon=True`: a thread não impede o servidor de encerrar."""
-    trabalho = Trabalho(pedido=pedido)
+def iniciar(pedido: PedidoComponente, *, gravacao: RegistroPesquisa | None = None) -> Trabalho:
+    """Cria o `Trabalho` e dispara a thread. `daemon=True`: a thread não impede o servidor de encerrar.
+
+    Com `gravacao`, é uma demonstração: o orçamento é o da gravação (o passo forçado cai no mesmo ponto).
+    """
+    trabalho = Trabalho(pedido=pedido, gravacao=gravacao)
+    if gravacao is not None:
+        trabalho.orcamento = demo.orcamento_da_gravacao(gravacao)
     trabalho.thread = threading.Thread(target=_trabalhar, args=(trabalho,), daemon=True, name="pesquisa")
     trabalho.thread.start()
     return trabalho

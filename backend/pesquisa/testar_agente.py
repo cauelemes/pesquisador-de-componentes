@@ -88,6 +88,31 @@ class AcompanhamentoNoTerminal:
             self.thread.join(timeout=5)
 
 
+def imprimir_resumo(relatorio, registro, modelo: str, esforco: str | None) -> None:
+    """O resumo final no terminal (o mesmo para a pesquisa real e para a demonstração)."""
+    resultado = relatorio.resultado
+    print(f"\nModelo: {modelo} · esforço: {esforco or 'padrão do modelo'}")
+    print(relatorio.orcamento.texto())
+    print(f"\nAchados válidos: {len(resultado.achados)}")
+    for achado in resultado.achados:
+        print(f"  - {achado.fabricante} {achado.mpn} ({achado.ciclo_de_vida})\n    {achado.url}")
+        for evidencia in achado.evidencias:
+            print(f"      [{evidencia.situacao}] {evidencia.requisito}: {evidencia.citacao!r}")
+    if resultado.alertas:
+        print("\nAlertas:")
+        for alerta in resultado.alertas:
+            print(f"  - {alerta}")
+    print(f"\nResumo conferido: {resultado.resumo_conferido}")
+    if resultado.resumo_da_llm:
+        print(f"\n{ROTULO_RESUMO_DA_LLM}: {resultado.resumo_da_llm}")
+    uso = registro.uso
+    print(
+        f"\nUso: {uso.tokens_entrada} tokens de entrada ({uso.tokens_em_cache} em cache), {uso.tokens_saida} de saída "
+        f"({uso.tokens_raciocinio} de raciocínio) · custo estimado US$ {uso.custo_estimado_usd:.4f} · "
+        f"{registro.duracao_segundos:.0f} s"
+    )
+
+
 def main(argumentos: list[str] | None = None) -> int:
     """Código de saída: 0 = deu certo, 1 = erro no pedido, 2 = nenhum achado válido, 3 = registro não salvo."""
     leitor = argparse.ArgumentParser(description="Pesquisa componentes eletrônicos para um pedido em JSON.")
@@ -128,27 +153,7 @@ def main(argumentos: list[str] | None = None) -> int:
             acompanhamento.parar_batimento()  # o batimento para quando a pesquisa termina (até com erro)
     relatorio, registro = execucao.relatorio, execucao.registro
     resultado = relatorio.resultado
-
-    print(f"\nModelo: {opcoes.modelo} · esforço: {opcoes.esforco or 'padrão do modelo'}")
-    print(relatorio.orcamento.texto())
-    print(f"\nAchados válidos: {len(resultado.achados)}")
-    for achado in resultado.achados:
-        print(f"  - {achado.fabricante} {achado.mpn} ({achado.ciclo_de_vida})\n    {achado.url}")
-        for evidencia in achado.evidencias:
-            print(f"      [{evidencia.situacao}] {evidencia.requisito}: {evidencia.citacao!r}")
-    if resultado.alertas:
-        print("\nAlertas:")
-        for alerta in resultado.alertas:
-            print(f"  - {alerta}")
-    print(f"\nResumo conferido: {resultado.resumo_conferido}")
-    if resultado.resumo_da_llm:
-        print(f"\n{ROTULO_RESUMO_DA_LLM}: {resultado.resumo_da_llm}")
-    uso = registro.uso
-    print(
-        f"\nUso: {uso.tokens_entrada} tokens de entrada ({uso.tokens_em_cache} em cache), {uso.tokens_saida} de saída "
-        f"({uso.tokens_raciocinio} de raciocínio) · custo estimado US$ {uso.custo_estimado_usd:.4f} · "
-        f"{registro.duracao_segundos:.0f} s"
-    )
+    imprimir_resumo(relatorio, registro, opcoes.modelo, opcoes.esforco)
 
     if opcoes.salvar:
         try:
