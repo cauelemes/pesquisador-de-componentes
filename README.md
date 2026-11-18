@@ -3,7 +3,7 @@
 Acha componentes eletrônicos que atendem a uma especificação, com cada afirmação provada por uma citação conferida
 pelo código.
 
-![testes](https://github.com/<usuario>/<repositorio>/actions/workflows/testes.yml/badge.svg)
+![testes](https://github.com/cauelemes/pesquisador-de-componentes/actions/workflows/testes.yml/badge.svg)
 
 | Etapa 1: o pedido | Etapa 2: a atividade ao vivo | Etapa 3: a revisão das provas |
 |---|---|---|
