@@ -5,9 +5,21 @@ pelo código.
 
 ![testes](https://github.com/cauelemes/pesquisador-de-componentes/actions/workflows/testes.yml/badge.svg)
 
-| Etapa 1: o pedido | Etapa 2: a atividade ao vivo | Etapa 3: a revisão das provas |
-|---|---|---|
-| ![Etapa 1: o pedido](docs/img/pedido.png) | ![Etapa 2: a atividade ao vivo](docs/img/pesquisa.png) | ![Etapa 3: a revisão das provas](docs/img/revisao.png) |
+![Revisão das provas: cada componente com a citação literal, a situação e a justificativa](docs/img/revisao.png)
+
+<details>
+<summary>Ver as outras etapas (pedido e pesquisa ao vivo)</summary>
+
+**Etapa 1: o pedido**
+
+![Etapa 1: o pedido](docs/img/pedido.png)
+
+**Etapa 2: a atividade ao vivo**
+
+![Etapa 2: a atividade ao vivo](docs/img/pesquisa.png)
+
+</details>
+
 
 ## Por que este projeto existe
 
