@@ -1,7 +1,6 @@
 """Cliente mínimo para conversar com LLMs hospedadas na Together AI.
 
-Este módulo é a "porta de entrada" única para os modelos: os agentes do sistema
-(buscadores, verificadores...) vão chamar `enviar_prompt`
+Este módulo é a "porta de entrada" única para os modelos: o agente chama `conversar`
 em vez de falar com o SDK da Together diretamente. Assim, trocar de provedor ou
 de modelo no futuro mexe em um só lugar.
 
@@ -118,67 +117,6 @@ def _tokens_detalhados(uso, grupo: str, nome: str) -> int:
     return valor if type(valor) is int and valor > 0 else 0
 
 
-def enviar_prompt(
-    prompt: str,
-    *,
-    sistema: str | None = None,
-    modelo: str | None = None,
-    temperatura: float = 0.2,
-    max_tokens: int = 1024,
-    parametros_extras: dict | None = None,
-    timeout: float | None = None,
-) -> str:
-    """Envia um prompt a um modelo de chat e devolve o texto da resposta.
-
-    Args:
-        prompt: a mensagem do usuário (a tarefa ou pergunta).
-        sistema: instruções de comportamento do modelo (papel "system"), opcional.
-        modelo: ID do modelo. Se None, usa MODELO_PADRAO.
-        temperatura: 0 = respostas mais determinísticas; valores altos = mais criativas.
-            Para extração de dados e JSON, valores baixos costumam funcionar melhor.
-        max_tokens: limite de tamanho da resposta (um token é ~3-4 caracteres).
-        parametros_extras: parâmetros específicos de algum modelo, repassados como estão
-            (ex.: {"reasoning": {"enabled": False}}).
-        timeout: segundos de espera pela resposta; None usa `TIMEOUT_SEGUNDOS`. Chamadas com raciocínio
-            ligado podem levar bem mais que o padrão.
-
-    Raises:
-        ErroTogether: chave ausente/inválida, modelo inexistente, falha de rede etc.
-    """
-    # Se nenhum modelo foi informado (None), usa o padrão do módulo.
-    modelo = modelo or MODELO_PADRAO
-
-    # O histórico de uma conversa é uma lista de mensagens com um "papel":
-    #   system    -> regras gerais de comportamento
-    #   user      -> o que o usuário (ou nosso código) pede
-    #   assistant -> respostas anteriores do modelo
-    mensagens = []
-    if sistema:
-        mensagens.append({"role": "system", "content": sistema})
-    mensagens.append({"role": "user", "content": prompt})
-
-    cliente = _criar_cliente(timeout)
-    try:
-        resposta = cliente.chat.completions.create(
-            model=modelo,
-            messages=mensagens,
-            temperature=temperatura,
-            max_tokens=max_tokens,
-            **(parametros_extras or {}),
-        )
-    except Exception as erro:  # o SDK levanta vários tipos; traduzimos todos
-        # O erro não traz o uso e não sabemos se a Together cobrou: entra só na estimativa do contador pessimista.
-        contador_de_uso.registrar_falha(modelo, contador_de_uso.estimar_tokens_das_mensagens(mensagens))
-        raise _traduzir_erro(erro) from None
-    _registrar_uso(modelo, resposta, mensagens)
-
-    # A API pode devolver várias alternativas ("choices"); pedimos só uma. Podemos alterar o 
-    # parâmetro n = 1 no futuro, mas como a quantidade de tokens já está limitada, por ora
-    # estamos deixando essa decisão a encargo da together ai.
-    conteudo = resposta.choices[0].message.content
-    return conteudo or ""
-
-
 @dataclass
 class ChamadaFerramenta:
     """Um pedido do modelo: "execute a ferramenta `nome` com estes argumentos"."""
@@ -239,7 +177,7 @@ def conversar(
 ) -> RespostaConversa:
     """Envia uma conversa (lista de mensagens) a um modelo, que pode pedir o uso de ferramentas.
 
-    Diferente de `enviar_prompt`, a conversa é você quem mantém: anexe ao histórico a
+    A conversa é você quem mantém: anexe ao histórico a
     mensagem do modelo (`resposta.como_mensagem()`) e, para cada pedido de ferramenta, o
     resultado (`mensagem_resultado`), e chame de novo.
 

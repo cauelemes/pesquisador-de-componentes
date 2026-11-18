@@ -1,0 +1,24 @@
+# Roda a suíte de testes a cada push e pull request.
+# Os testes usam a LLM e o buscador SIMULADOS: não precisam de rede para as APIs nem de segredos.
+name: testes
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read  # o workflow só lê o código
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+      - name: Rodar os testes
+        run: python -m unittest discover -s tests -t .

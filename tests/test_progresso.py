@@ -10,7 +10,6 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from backend.compartilhado import together_client as tg
 from backend.pesquisa import progresso
 from backend.pesquisa import testar_agente
 from backend.pesquisa.progresso import ALERTA_CALLBACK, MAX_TEXTO_EVENTO, EventoDeProgresso, emitir, limpar_texto

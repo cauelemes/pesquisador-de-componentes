@@ -1,15 +1,9 @@
-"""Utilidades para URLs usadas na pesquisa (padronizar e achar o "site" de um endereço).
+"""Utilidades para URLs usadas na pesquisa: padronizar um endereço para compará-lo com outro.
 
-Servem ao agente: comparar a URL que ele citou com
-as que as ferramentas devolveram, e saber se duas URLs são do mesmo site.
+Servem ao agente e à conferência: comparar a URL que a LLM citou com as que as ferramentas leram de fato.
 """
 
 from urllib.parse import urlsplit, urlunsplit
-
-# Segundos níveis comuns em domínios como "empresa.com.br". Serve para saber quantos pedaços
-# do endereço formam o "domínio base". TODO: trocar por uma lista completa de sufixos
-# públicos (biblioteca `tldextract` ou similar) se esta heurística falhar.
-SEGUNDOS_NIVEIS = {"com", "ind", "net", "org", "gov", "edu", "eng"}
 
 
 def normalizar_url(url: str) -> str | None:
@@ -22,12 +16,3 @@ def normalizar_url(url: str) -> str | None:
     if partes.scheme.lower() not in ("http", "https") or not partes.hostname:
         return None
     return urlunsplit((partes.scheme.lower(), partes.hostname.lower(), partes.path.rstrip("/"), partes.query, ""))
-
-
-def dominio_base(url_normalizada: str) -> str:
-    """Domínio base do site: 'blog.exemplo.com.br' e 'www.exemplo.com.br' viram 'exemplo.com.br'."""
-    host = urlsplit(url_normalizada).hostname or ""
-    partes = host.split(".")
-    if len(partes) >= 3 and partes[-2] in SEGUNDOS_NIVEIS:
-        return ".".join(partes[-3:])
-    return ".".join(partes[-2:])
